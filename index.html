@@ -398,13 +398,13 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 <!-- Modal: miembro -->
 <div class="overlay" id="memberOverlay">
   <div class="modal">
-    <div class="mtitle"><span>Nuevo integrante</span><button id="memberClose">&times;</button></div>
+    <div class="mtitle"><span id="memberModalTitle">Nuevo integrante</span><button id="memberClose">&times;</button></div>
     <div class="mbody">
       <div class="field"><label>Nombre</label><input id="m_name" placeholder="Ej: Ingrid Polli"></div>
       <div class="field"><label>Rol</label><input id="m_role" placeholder="Ej: Ingeniería industrial"></div>
     </div>
     <div class="mfoot">
-      <div></div>
+      <button class="btn danger" id="memberDelete">Eliminar</button>
       <div style="display:flex;gap:8px;">
         <button class="btn ghost" id="memberCancel">Cancelar</button>
         <button class="btn accent" id="memberSave">Guardar</button>
@@ -691,6 +691,7 @@ function initSyncUI(){
 let state = load();
 let currentView = "gantt";
 let dayWidth = 30;
+let ganttRangePad = 0;
 let editingTaskId = null;
 let editingStageId = null;
 let editingMemberId = null;
@@ -755,7 +756,7 @@ function renderGantt(){
   let minDate = parseDate(state.tasks.reduce((a,t)=>t.start<a?t.start:a, state.tasks[0].start));
   let maxDate = parseDate(state.tasks.reduce((a,t)=>t.end>a?t.end:a, state.tasks[0].end));
   minDate = new Date(minDate.getTime() - 4*DAY);
-  maxDate = new Date(maxDate.getTime() + 8*DAY);
+  maxDate = new Date(maxDate.getTime() + 8*DAY + ganttRangePad*DAY);
   const totalDays = daysBetween(minDate, maxDate);
   const totalWidth = totalDays * dayWidth;
 
@@ -763,6 +764,7 @@ function renderGantt(){
     <div style="display:flex;gap:8px;">
       <button class="btn accent small" id="newTaskBtn">+ Nueva tarea</button>
       <button class="btn ghost small" id="newStageBtn">+ Nueva etapa</button>
+      <button class="btn ghost small" id="addMonthBtn">+ Agregar mes</button>
     </div>
     <div class="zoom-ctrl">Zoom <input type="range" id="zoomRange" min="16" max="56" value="${dayWidth}"></div>
   </div>`;
@@ -829,6 +831,7 @@ function renderGantt(){
 
   el("newTaskBtn").onclick = ()=>openTaskModal(null, state.stages[0]?.id);
   el("newStageBtn").onclick = ()=>openStageModal(null);
+  el("addMonthBtn").onclick = ()=>{ ganttRangePad += 30; renderGantt(); };
   el("zoomRange").oninput = (e)=>{ dayWidth = parseInt(e.target.value); renderGantt(); };
 
   viewEl.querySelectorAll(".task-row-label, .gbar .label").forEach(node=>{
@@ -1116,10 +1119,12 @@ function initials(name){
 }
 
 /* ================= BITÁCORA SEMANAL ================= */
+let expandedWeeks = new Set();
+
 function renderLog(){
   if(!state.weeklyLog) state.weeklyLog = {};
   if(!state.logWeeks || !state.logWeeks.length){
-    state.logWeeks = [fmtDate(mondayOf(new Date()))];
+    state.logWeeks = ["2026-09-14"];
     save();
   }
 
@@ -1127,27 +1132,39 @@ function renderLog(){
   state.logWeeks.forEach(mondayStr=>{
     const monday = parseDate(mondayStr);
     const saturday = new Date(monday.getTime() + 5*DAY);
+    const isOpen = expandedWeeks.has(mondayStr);
     html += `<div class="log-week" data-week="${mondayStr}">
-      <div class="log-week-head">
-        <span>Semana del ${fmtLong(monday)} al ${fmtLong(saturday)}</span>
+      <div class="log-week-head" data-toggle="${mondayStr}" style="cursor:pointer;">
+        <span>${isOpen?"▾":"▸"} Semana del ${fmtLong(monday)} al ${fmtLong(saturday)}</span>
         <button class="btn ghost small copy-week" data-week="${mondayStr}">Copiar</button>
       </div>`;
-    for(let i=0;i<6;i++){
-      const d = new Date(monday.getTime() + i*DAY);
-      const ds = fmtDate(d);
-      const wd = d.getDay();
-      const dayCls = wd===6 ? "sat" : (wd===0 ? "sun" : "");
-      const val = state.weeklyLog[ds] || "";
-      html += `<div class="log-day ${dayCls}">
-        <div class="log-day-label">${dayNamesEs[i]} ${d.getDate()}/${d.getMonth()+1}</div>
-        <textarea class="log-day-text" data-date="${ds}" placeholder="Actividades importantes del día...">${escapeHtml(val)}</textarea>
-      </div>`;
+    if(isOpen){
+      for(let i=0;i<6;i++){
+        const d = new Date(monday.getTime() + i*DAY);
+        const ds = fmtDate(d);
+        const wd = d.getDay();
+        const dayCls = wd===6 ? "sat" : (wd===0 ? "sun" : "");
+        const val = state.weeklyLog[ds] || "";
+        html += `<div class="log-day ${dayCls}">
+          <div class="log-day-label">${dayNamesEs[i]} ${d.getDate()}/${d.getMonth()+1}</div>
+          <textarea class="log-day-text" data-date="${ds}" placeholder="Actividades importantes del día...">${escapeHtml(val)}</textarea>
+        </div>`;
+      }
     }
     html += `</div>`;
   });
   html += `<button class="btn accent small" id="addWeekBtn">+ Agregar semana</button>`;
 
   viewEl.innerHTML = html;
+
+  viewEl.querySelectorAll(".log-week-head").forEach(head=>{
+    head.addEventListener("click", (e)=>{
+      if(e.target.closest(".copy-week")) return;
+      const key = head.dataset.toggle;
+      if(expandedWeeks.has(key)) expandedWeeks.delete(key); else expandedWeeks.add(key);
+      renderLog();
+    });
+  });
 
   viewEl.querySelectorAll(".log-day-text").forEach(ta=>{
     ta.addEventListener("input", e=>{
@@ -1157,7 +1174,8 @@ function renderLog(){
   });
 
   viewEl.querySelectorAll(".copy-week").forEach(btn=>{
-    btn.addEventListener("click", ()=>{
+    btn.addEventListener("click", (e)=>{
+      e.stopPropagation();
       const monday = parseDate(btn.dataset.week);
       let text = `Semana del ${fmtLong(monday)} al ${fmtLong(new Date(monday.getTime()+5*DAY))}\n\n`;
       for(let i=0;i<6;i++){
@@ -1176,7 +1194,9 @@ function renderLog(){
 
   el("addWeekBtn").onclick = ()=>{
     const last = state.logWeeks[state.logWeeks.length-1];
-    state.logWeeks.push(fmtDate(new Date(parseDate(last).getTime() + 7*DAY)));
+    const next = fmtDate(new Date(parseDate(last).getTime() + 7*DAY));
+    state.logWeeks.push(next);
+    expandedWeeks.add(next);
     save(); renderLog();
   };
 }
