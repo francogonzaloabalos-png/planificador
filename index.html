@@ -1469,7 +1469,9 @@ async function exportExcel(){
   a.href = url; a.download = (state.projectName||"proyecto").replace(/\s+/g,"_") + ".xlsx";
   a.click(); URL.revokeObjectURL(url);
 }
-el("exportExcelBtn").onclick = exportExcel;
+const exportExcelBtn = el("exportExcelBtn");
+if(exportExcelBtn) exportExcelBtn.onclick = exportExcel;
+else console.warn("No se encontró el botón #exportExcelBtn en el HTML — revisá que se haya agregado en el sidebar-foot.");
 
 /* ================= EXPORT / IMPORT ================= */
 el("exportBtn").onclick = ()=>{
@@ -1509,7 +1511,7 @@ function escapeAttr(str){ return escapeHtml(str); }
 /* init */
 el("projectName").value = state.projectName || "Proyecto sin nombre";
 initSyncUI();
-render();
+requestAnimationFrame(()=> requestAnimationFrame(render));
 
 })();
 </script>
