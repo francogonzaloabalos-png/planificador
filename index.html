@@ -594,13 +594,11 @@ function connectFirebase(config, room){
     fbListenerFn = fbRoomRef.on("value", snap=>{
       const val = snap.val();
       if(!val || !val.data){
-        // la sala está vacía: la inicializamos con lo que tenemos localmente
         pushToFirebase();
-        setSyncStatus("ok", "Conectado — sala inicializada con tus datos");
+        setSyncStatus("ok", "Conectado — sala inicializada con sus datos");
         return;
       }
       if(val.updatedBy === clientId){
-        // es el eco de nuestro propio push
         setSyncStatus("ok", "Sincronizado " + nowTime());
         return;
       }
@@ -609,14 +607,25 @@ function connectFirebase(config, room){
         setSyncStatus("ok", "Sincronizado " + nowTime());
         return;
       }
-      pendingRemoteState = val.data;
-      showRemoteChangeBanner();
-      setSyncStatus("ok", "Hay cambios nuevos de tu compañera");
+      
+      // Aplicación automática de cambios (Estilo Google Sheets)
+      suppressNextLocalPush = true;
+      state = val.data; 
+      try{ activeStorage().setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+      document.getElementById("projectName").value = state.projectName || "Proyecto sin nombre";
+      
+      // Si usted NO está editando una tarea activamente, redibuja la pantalla para mostrar los cambios
+      if (!editingTaskId) {
+          render();
+      }
+      
+      setSyncStatus("ok", "Sincronizado (cambios recibidos)");
+      hideRemoteChangeBanner(); 
     }, err=>{
-      setSyncStatus("err", "Error de conexión (revisá la configuración pegada)");
+      setSyncStatus("err", "Error de conexión (revise la configuración pegada)");
     });
   }catch(e){
-    setSyncStatus("err", "No se pudo conectar (revisá el JSON pegado)");
+    setSyncStatus("err", "No se pudo conectar (revise el JSON pegado)");
     fbApp = null; fbDb = null; fbRoomRef = null;
   }
 }
