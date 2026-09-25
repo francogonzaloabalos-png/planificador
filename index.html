@@ -23,6 +23,8 @@
   --grey:#8A93A6;
   --grey-soft:#E7E9ED;
   --weekend:#FAFAFB;
+  --sat:#EEF0F3;
+  --sun:#DFE2E8;
   --today:#C1443C;
   --radius:6px;
   --shadow:0 1px 2px rgba(28,35,51,.06), 0 4px 10px rgba(28,35,51,.05);
@@ -144,9 +146,13 @@ input,select,textarea{font-family:inherit;font-size:13px;}
   font-size:10.5px;color:var(--ink-soft);
 }
 .day-cell.weekend{background:var(--weekend);}
+.day-cell.sat{background:var(--sat);}
+.day-cell.sun{background:var(--sun);}
 .gantt-body{position:relative;}
 .grid-col{position:absolute;top:0;bottom:0;border-right:1px solid var(--line-soft);}
 .grid-col.weekend{background:var(--weekend);}
+.grid-col.sat{background:var(--sat);}
+.grid-col.sun{background:var(--sun);}
 .grid-row{
   height:36px;border-bottom:1px solid var(--line-soft);position:relative;
 }
@@ -217,6 +223,16 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 .member-tasks .mt{font-size:12px;color:var(--ink-soft);display:flex;justify-content:space-between;gap:6px;}
 .member-tasks .mt span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
+/* ================= BITÁCORA SEMANAL ================= */
+.log-week{background:var(--surface);border:1px solid var(--line);border-radius:8px;margin-bottom:16px;box-shadow:var(--shadow);overflow:hidden;}
+.log-week-head{background:var(--line-soft);padding:10px 14px;font-weight:600;font-size:13px;display:flex;justify-content:space-between;align-items:center;}
+.log-day{display:flex;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line-soft);align-items:flex-start;}
+.log-day:last-child{border-bottom:none;}
+.log-day.sat{background:var(--sat);}
+.log-day.sun{background:var(--sun);}
+.log-day-label{width:110px;flex:none;font-size:12.5px;font-weight:600;color:var(--ink-soft);padding-top:9px;}
+.log-day-text{flex:1;border:1px solid var(--line);border-radius:var(--radius);padding:8px 10px;min-height:44px;resize:vertical;background:var(--bg);font-size:13px;}
+
 /* ================= MODAL ================= */
 .overlay{position:fixed;inset:0;background:rgba(20,24,34,.42);display:none;align-items:flex-start;justify-content:center;z-index:50;padding:5vh 16px;overflow:auto;}
 .overlay.show{display:flex;}
@@ -252,26 +268,10 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 ::-webkit-scrollbar-thumb{background:#D3D7DE;border-radius:5px;}
 ::-webkit-scrollbar-track{background:transparent;}
 
-/* ================= REMOTE CHANGE BANNER ================= */
-#remoteBanner{
-  display:none;position:fixed;top:14px;left:50%;transform:translateX(-50%);
-  background:var(--ink);color:#fff;padding:10px 12px 10px 16px;border-radius:9px;
-  box-shadow:0 10px 30px rgba(0,0,0,.3);z-index:100;font-size:13px;
-  align-items:center;gap:12px;max-width:92vw;
-}
-#remoteBanner .txt{white-space:nowrap;}
-#remoteBanner .btn{white-space:nowrap;}
-#remoteBanner .btn.ghost{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.25);}
-#remoteBanner .btn.ghost:hover{background:rgba(255,255,255,.2);}
 </style>
 </head>
 <body>
 
-<div id="remoteBanner">
-  <span class="txt">Tu compañera hizo cambios en la sala. ¿Los traés?</span>
-  <button class="btn accent small" id="remoteBannerApply">Traer cambios</button>
-  <button class="btn ghost small" id="remoteBannerDismiss">Ignorar</button>
-</div>
 
 <div class="shell">
   <aside class="sidebar">
@@ -284,10 +284,12 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
       <button data-view="kanban"><span class="dot"></span>Tablero</button>
       <button data-view="table"><span class="dot"></span>Listado</button>
       <button data-view="team"><span class="dot"></span>Equipo</button>
+      <button data-view="log"><span class="dot"></span>Bitácora</button>
     </nav>
     <div class="sync-status" id="syncStatus"><span class="sync-dot" id="syncDot"></span><span id="syncText">Sincronización no configurada</span></div>
     <div class="sidebar-foot" style="flex-wrap:wrap;">
       <button id="syncBtn" style="width:100%;margin-bottom:6px;">⚙ Sincronización</button>
+      <button id="exportExcelBtn" style="width:100%;margin-bottom:6px;">📊 Exportar a Excel</button>
       <button id="exportBtn">Exportar</button>
       <button id="importBtn">Importar</button>
       <input type="file" id="importFile" accept="application/json" style="display:none">
@@ -466,6 +468,7 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script>
 (function(){
 "use strict";
@@ -473,12 +476,15 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 const STORAGE_KEY = "planificador_data_v1";
 const DAY = 86400000;
 const memberPalette = ["#2F6F5E","#5468C4","#C98A2C","#8A5FBF","#3D7A99","#B0555A"];
+const dayNamesEs = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
 
 function uid(){ return Math.random().toString(36).slice(2,10); }
 function fmtDate(d){ return d.toISOString().slice(0,10); }
 function parseDate(s){ const d=new Date(s+"T00:00:00"); return d; }
 function daysBetween(a,b){ return Math.round((b-a)/DAY); }
 function todayStr(){ const t=new Date(); t.setHours(0,0,0,0); return fmtDate(t); }
+function fmtLong(d){ return d.toLocaleDateString("es-AR",{day:"numeric",month:"long"}); }
+function mondayOf(d){ const wd=d.getDay(); const diff=(wd===0?-6:1-wd); return new Date(d.getTime()+diff*DAY); }
 function clamp(n,min,max){ return Math.max(min,Math.min(max,n)); }
 function nowTime(){ return new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}); }
 
@@ -541,7 +547,6 @@ const SYNC_KEY = "planificador_sync_v1";
 const clientId = uid(); // identifica a este navegador/pestaña para no reaccionar a sus propios cambios
 let syncTimer = null;
 let fbApp = null, fbDb = null, fbRoomRef = null, fbListenerFn = null;
-let pendingRemoteState = null;
 let suppressNextLocalPush = false; // evita reenviar lo que acabamos de traer del servidor
 
 function loadSyncConfig(){
@@ -574,14 +579,6 @@ function pushToFirebase(){
   fbRoomRef.set({data: state, updatedBy: clientId, updatedAt: Date.now()})
     .then(()=> setSyncStatus("ok", "Sincronizado " + nowTime()))
     .catch(()=> setSyncStatus("err", "Error al sincronizar (revisá la configuración)"));
-}
-
-function showRemoteChangeBanner(){
-  document.getElementById("remoteBanner").style.display = "flex";
-}
-function hideRemoteChangeBanner(){
-  document.getElementById("remoteBanner").style.display = "none";
-  pendingRemoteState = null;
 }
 
 function connectFirebase(config, room){
@@ -620,7 +617,6 @@ function connectFirebase(config, room){
       }
       
       setSyncStatus("ok", "Sincronizado (cambios recibidos)");
-      hideRemoteChangeBanner(); 
     }, err=>{
       setSyncStatus("err", "Error de conexión (revise la configuración pegada)");
     });
@@ -634,7 +630,6 @@ function disconnectFirebase(){
   if(fbRoomRef && fbListenerFn) fbRoomRef.off("value", fbListenerFn);
   if(fbApp){ try{ fbApp.delete(); }catch(e){} }
   fbApp = null; fbDb = null; fbRoomRef = null; fbListenerFn = null;
-  hideRemoteChangeBanner();
 }
 
 function initSyncUI(){
@@ -644,19 +639,6 @@ function initSyncUI(){
   } else {
     setSyncStatus("", "Sincronización no configurada");
   }
-
-  document.getElementById("remoteBannerApply").onclick = ()=>{
-    if(pendingRemoteState){
-      suppressNextLocalPush = true;
-      state = pendingRemoteState;
-      try{ activeStorage().setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
-      el("projectName").value = state.projectName || "Proyecto sin nombre";
-      render();
-    }
-    hideRemoteChangeBanner();
-    setSyncStatus("ok", "Sincronizado " + nowTime());
-  };
-  document.getElementById("remoteBannerDismiss").onclick = hideRemoteChangeBanner;
 
   el("syncBtn").addEventListener("click", ()=>{
     const c = loadSyncConfig() || {};
@@ -711,6 +693,7 @@ let currentView = "gantt";
 let dayWidth = 30;
 let editingTaskId = null;
 let editingStageId = null;
+let editingMemberId = null;
 
 const el = (id)=>document.getElementById(id);
 const viewEl = el("view");
@@ -733,7 +716,7 @@ document.querySelectorAll(".nav button").forEach(btn=>{
     document.querySelectorAll(".nav button").forEach(b=>b.classList.remove("active"));
     btn.classList.add("active");
     currentView = btn.dataset.view;
-    const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo"};
+    const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal"};
     el("viewTitle").textContent = titles[currentView];
     render();
   });
@@ -758,6 +741,7 @@ function render(){
   else if(currentView==="kanban") renderKanban();
   else if(currentView==="table") renderTable();
   else if(currentView==="team") renderTeam();
+  else if(currentView==="log") renderLog();
 }
 
 /* ================= GANTT ================= */
@@ -884,8 +868,8 @@ function buildDays(minDate, totalDays){
   for(let i=0;i<totalDays;i++){
     const d = new Date(minDate.getTime() + i*DAY);
     const wd = d.getDay();
-    const weekend = wd===0||wd===6;
-    html += `<div class="day-cell ${weekend?'weekend':''}" style="width:${dayWidth}px">${d.getDate()}</div>`;
+    const cls = wd===6?'sat':(wd===0?'sun':'');
+    html += `<div class="day-cell ${cls}" style="width:${dayWidth}px">${d.getDate()}</div>`;
   }
   return html;
 }
@@ -894,8 +878,10 @@ function buildGridCols(minDate, totalDays){
   for(let i=0;i<totalDays;i++){
     const d = new Date(minDate.getTime() + i*DAY);
     const wd = d.getDay();
-    if(wd===0||wd===6){
-      html += `<div class="grid-col weekend" style="left:${i*dayWidth}px;width:${dayWidth}px"></div>`;
+    if(wd===6){
+      html += `<div class="grid-col sat" style="left:${i*dayWidth}px;width:${dayWidth}px"></div>`;
+    } else if(wd===0){
+      html += `<div class="grid-col sun" style="left:${i*dayWidth}px;width:${dayWidth}px"></div>`;
     }
   }
   return html;
@@ -1106,7 +1092,8 @@ function renderTeam(){
     html += `<div class="member-card" data-member="${m.id}">
       <div class="mhead">
         <div class="avatar" style="background:${color}">${initials(m.name)}</div>
-        <div><div class="mname">${escapeHtml(m.name)}</div><div class="mload">${escapeHtml(m.role||"")}</div></div>
+        <div style="flex:1;"><div class="mname">${escapeHtml(m.name)}</div><div class="mload">${escapeHtml(m.role||"")}</div></div>
+        <button class="btn ghost small edit-member" data-member="${m.id}">Editar</button>
       </div>
       <div class="mload">${active} tarea(s) activa(s)</div>
       <div class="load-bar"><div class="f" style="width:${clamp(active/maxRef*100,0,100)}%;background:${color}"></div></div>
@@ -1119,10 +1106,79 @@ function renderTeam(){
   });
   html += `</div>`;
   viewEl.innerHTML = html;
-  el("newMemberBtn").onclick = ()=>openMemberModal();
+  el("newMemberBtn").onclick = ()=>openMemberModal(null);
+  viewEl.querySelectorAll(".edit-member").forEach(btn=>{
+    btn.addEventListener("click", (e)=>{ e.stopPropagation(); openMemberModal(btn.dataset.member); });
+  });
 }
 function initials(name){
   return name.split(" ").filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join("");
+}
+
+/* ================= BITÁCORA SEMANAL ================= */
+function renderLog(){
+  if(!state.weeklyLog) state.weeklyLog = {};
+  if(!state.logWeeks || !state.logWeeks.length){
+    state.logWeeks = [fmtDate(mondayOf(new Date()))];
+    save();
+  }
+
+  let html = "";
+  state.logWeeks.forEach(mondayStr=>{
+    const monday = parseDate(mondayStr);
+    const saturday = new Date(monday.getTime() + 5*DAY);
+    html += `<div class="log-week" data-week="${mondayStr}">
+      <div class="log-week-head">
+        <span>Semana del ${fmtLong(monday)} al ${fmtLong(saturday)}</span>
+        <button class="btn ghost small copy-week" data-week="${mondayStr}">Copiar</button>
+      </div>`;
+    for(let i=0;i<6;i++){
+      const d = new Date(monday.getTime() + i*DAY);
+      const ds = fmtDate(d);
+      const wd = d.getDay();
+      const dayCls = wd===6 ? "sat" : (wd===0 ? "sun" : "");
+      const val = state.weeklyLog[ds] || "";
+      html += `<div class="log-day ${dayCls}">
+        <div class="log-day-label">${dayNamesEs[i]} ${d.getDate()}/${d.getMonth()+1}</div>
+        <textarea class="log-day-text" data-date="${ds}" placeholder="Actividades importantes del día...">${escapeHtml(val)}</textarea>
+      </div>`;
+    }
+    html += `</div>`;
+  });
+  html += `<button class="btn accent small" id="addWeekBtn">+ Agregar semana</button>`;
+
+  viewEl.innerHTML = html;
+
+  viewEl.querySelectorAll(".log-day-text").forEach(ta=>{
+    ta.addEventListener("input", e=>{
+      state.weeklyLog[e.target.dataset.date] = e.target.value;
+    });
+    ta.addEventListener("blur", ()=> save());
+  });
+
+  viewEl.querySelectorAll(".copy-week").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const monday = parseDate(btn.dataset.week);
+      let text = `Semana del ${fmtLong(monday)} al ${fmtLong(new Date(monday.getTime()+5*DAY))}\n\n`;
+      for(let i=0;i<6;i++){
+        const d = new Date(monday.getTime() + i*DAY);
+        const val = (state.weeklyLog[fmtDate(d)] || "").trim();
+        if(val) text += `${dayNamesEs[i]} ${d.getDate()}/${d.getMonth()+1}: ${val}\n`;
+      }
+      const done = ()=>{ const old = btn.textContent; btn.textContent = "¡Copiado!"; setTimeout(()=>btn.textContent = old, 1500); };
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(done).catch(()=> prompt("Copiá manualmente:", text));
+      } else {
+        prompt("Copiá manualmente:", text);
+      }
+    });
+  });
+
+  el("addWeekBtn").onclick = ()=>{
+    const last = state.logWeeks[state.logWeeks.length-1];
+    state.logWeeks.push(fmtDate(new Date(parseDate(last).getTime() + 7*DAY)));
+    save(); renderLog();
+  };
 }
 
 /* ================= TASK MODAL ================= */
@@ -1275,17 +1331,145 @@ el("stageSave").onclick = ()=>{
 };
 
 /* ================= MEMBER MODAL ================= */
-function openMemberModal(){
-  el("m_name").value = ""; el("m_role").value = "";
+function openMemberModal(memberId){
+  editingMemberId = memberId;
+  const isNew = !memberId;
+  el("memberModalTitle").textContent = isNew ? "Nuevo integrante" : "Editar integrante";
+  el("memberDelete").style.display = isNew ? "none" : "inline-block";
+  if(isNew){
+    el("m_name").value = ""; el("m_role").value = "";
+  } else {
+    const m = state.members.find(x=>x.id===memberId);
+    el("m_name").value = m.name; el("m_role").value = m.role || "";
+  }
   el("memberOverlay").classList.add("show");
 }
 el("memberClose").onclick = el("memberCancel").onclick = ()=>el("memberOverlay").classList.remove("show");
 el("memberSave").onclick = ()=>{
   const name = el("m_name").value.trim();
   if(!name) return;
-  state.members.push({id:uid(), name, role: el("m_role").value.trim()});
+  const role = el("m_role").value.trim();
+  if(editingMemberId){
+    Object.assign(state.members.find(m=>m.id===editingMemberId), {name, role});
+  } else {
+    state.members.push({id:uid(), name, role});
+  }
   save(); el("memberOverlay").classList.remove("show"); render();
 };
+el("memberDelete").onclick = ()=>{
+  if(editingMemberId && confirm("¿Eliminar a este integrante? Sus tareas quedan sin asignar.")){
+    const id = editingMemberId;
+    state.members = state.members.filter(m=>m.id!==id);
+    state.tasks.forEach(t=>{ if(t.memberId===id) t.memberId = null; });
+    save(); el("memberOverlay").classList.remove("show"); render();
+  }
+};
+
+/* ================= EXPORT EXCEL ================= */
+async function exportExcel(){
+  if(typeof ExcelJS === "undefined"){
+    alert("No se pudo cargar la librería de Excel. Revisá tu conexión a internet e intentá de nuevo.");
+    return;
+  }
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Planificador";
+  wb.created = new Date();
+
+  const headerFill = {type:"pattern", pattern:"solid", fgColor:{argb:"FF1C2333"}};
+  const headerFont = {color:{argb:"FFFFFFFF"}, bold:true, size:11};
+  const thinBorder = {
+    top:{style:"thin",color:{argb:"FFE1E4EA"}}, bottom:{style:"thin",color:{argb:"FFE1E4EA"}},
+    left:{style:"thin",color:{argb:"FFE1E4EA"}}, right:{style:"thin",color:{argb:"FFE1E4EA"}}
+  };
+  function styleHeader(row){
+    row.eachCell(cell=>{ cell.fill = headerFill; cell.font = headerFont; cell.alignment = {vertical:"middle"}; cell.border = thinBorder; });
+    row.height = 20;
+  }
+  function styleBody(ws, startRow){
+    for(let r=startRow;r<=ws.rowCount;r++){
+      const row = ws.getRow(r);
+      const shaded = (r-startRow)%2===1;
+      row.eachCell(cell=>{
+        cell.border = thinBorder;
+        if(shaded) cell.fill = {type:"pattern", pattern:"solid", fgColor:{argb:"FFF5F6F8"}};
+        cell.alignment = {vertical:"middle", wrapText:true};
+      });
+    }
+  }
+
+  const wsT = wb.addWorksheet("Gantt");
+  wsT.columns = [
+    {header:"Etapa", key:"etapa", width:24},
+    {header:"Tarea", key:"tarea", width:32},
+    {header:"Responsable", key:"resp", width:20},
+    {header:"Inicio", key:"inicio", width:12},
+    {header:"Fin", key:"fin", width:12},
+    {header:"Estado", key:"estado", width:14},
+    {header:"Prioridad", key:"prioridad", width:12},
+    {header:"Avance %", key:"avance", width:10},
+    {header:"Dependencias", key:"deps", width:28},
+    {header:"Criterio de aceptación", key:"acept", width:34},
+    {header:"Riesgos", key:"riesgos", width:30},
+  ];
+  state.stages.forEach(stage=>{
+    tasksByStage(stage.id).forEach(t=>{
+      const mem = memberById(t.memberId);
+      const deps = (t.dependsOn||[]).map(id=>{ const dt=state.tasks.find(x=>x.id===id); return dt?dt.name:""; }).filter(Boolean).join(", ");
+      wsT.addRow({
+        etapa: stage.name, tarea: t.name, resp: mem?mem.name:"—",
+        inicio: t.start, fin: t.end, estado: statusLabel(computeStatus(t)),
+        prioridad: t.priority, avance: t.progress, deps, acept: t.acceptance||"", riesgos: t.risks||""
+      });
+    });
+  });
+  styleHeader(wsT.getRow(1));
+  styleBody(wsT, 2);
+  wsT.autoFilter = {from:"A1", to:"K1"};
+  wsT.views = [{state:"frozen", ySplit:1}];
+
+  const wsE = wb.addWorksheet("Equipo");
+  wsE.columns = [
+    {header:"Nombre", key:"nombre", width:24},
+    {header:"Rol", key:"rol", width:26},
+    {header:"Tareas activas", key:"activas", width:16},
+    {header:"Tareas totales", key:"totales", width:16},
+  ];
+  state.members.forEach(m=>{
+    const tasks = state.tasks.filter(t=>t.memberId===m.id);
+    wsE.addRow({nombre:m.name, rol:m.role||"", activas: tasks.filter(t=>t.status!=="completado").length, totales: tasks.length});
+  });
+  styleHeader(wsE.getRow(1));
+  styleBody(wsE, 2);
+  wsE.views = [{state:"frozen", ySplit:1}];
+
+  const wsB = wb.addWorksheet("Bitácora semanal");
+  wsB.columns = [
+    {header:"Semana", key:"semana", width:28},
+    {header:"Día", key:"dia", width:14},
+    {header:"Fecha", key:"fecha", width:12},
+    {header:"Actividad", key:"actividad", width:60},
+  ];
+  (state.logWeeks||[]).forEach(mondayStr=>{
+    const monday = parseDate(mondayStr);
+    const weekLabel = `${fmtLong(monday)} al ${fmtLong(new Date(monday.getTime()+5*DAY))}`;
+    for(let i=0;i<6;i++){
+      const d = new Date(monday.getTime()+i*DAY);
+      const ds = fmtDate(d);
+      wsB.addRow({semana: weekLabel, dia: dayNamesEs[i], fecha: ds, actividad: (state.weeklyLog&&state.weeklyLog[ds])||""});
+    }
+  });
+  styleHeader(wsB.getRow(1));
+  styleBody(wsB, 2);
+  wsB.views = [{state:"frozen", ySplit:1}];
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = (state.projectName||"proyecto").replace(/\s+/g,"_") + ".xlsx";
+  a.click(); URL.revokeObjectURL(url);
+}
+el("exportExcelBtn").onclick = exportExcel;
 
 /* ================= EXPORT / IMPORT ================= */
 el("exportBtn").onclick = ()=>{
