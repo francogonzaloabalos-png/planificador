@@ -1447,6 +1447,64 @@ async function exportExcel(){
   wsT.autoFilter = {from:"A1", to:"K1"};
   wsT.views = [{state:"frozen", ySplit:1}];
 
+  // ---- Hoja Gantt visual (celdas coloreadas por fecha) ----
+  if(state.tasks.length){
+    const wsG = wb.addWorksheet("Gantt visual");
+    let gMin = parseDate(state.tasks.reduce((a,t)=>t.start<a?t.start:a, state.tasks[0].start));
+    let gMax = parseDate(state.tasks.reduce((a,t)=>t.end>a?t.end:a, state.tasks[0].end));
+    gMin = new Date(gMin.getTime() - 2*DAY);
+    gMax = new Date(gMax.getTime() + 2*DAY);
+    const totalGDays = daysBetween(gMin, gMax) + 1;
+
+    wsG.getColumn(1).width = 30;
+    wsG.getColumn(2).width = 20;
+    for(let i=0;i<totalGDays;i++) wsG.getColumn(3+i).width = 3.2;
+
+    const headerRow = wsG.getRow(1);
+    headerRow.getCell(1).value = "Tarea";
+    headerRow.getCell(2).value = "Responsable";
+    for(let i=0;i<totalGDays;i++){
+      const d = new Date(gMin.getTime() + i*DAY);
+      headerRow.getCell(3+i).value = d.getDate();
+    }
+    styleHeader(headerRow);
+
+    const statusColors = {
+      pendiente:"FF8A93A6", en_curso:"FFC98A2C", completado:"FF2F6F5E", atrasado:"FFC1443C"
+    };
+    const weekendFill = {type:"pattern", pattern:"solid", fgColor:{argb:"FFF5F6F8"}};
+
+    let rowIdx = 2;
+    state.stages.forEach(stage=>{
+      const stageRow = wsG.getRow(rowIdx);
+      stageRow.getCell(1).value = stage.name;
+      stageRow.getCell(1).font = {bold:true};
+      stageRow.getCell(1).fill = {type:"pattern", pattern:"solid", fgColor:{argb:"FFEEF0F3"}};
+      for(let i=0;i<totalGDays;i++) stageRow.getCell(3+i).fill = {type:"pattern", pattern:"solid", fgColor:{argb:"FFEEF0F3"}};
+      rowIdx++;
+      tasksByStage(stage.id).forEach(t=>{
+        const mem = memberById(t.memberId);
+        const row = wsG.getRow(rowIdx);
+        row.getCell(1).value = t.name;
+        row.getCell(2).value = mem ? mem.name : "—";
+        const tStart = parseDate(t.start), tEnd = parseDate(t.end);
+        const st = computeStatus(t);
+        for(let i=0;i<totalGDays;i++){
+          const d = new Date(gMin.getTime() + i*DAY);
+          const cell = row.getCell(3+i);
+          if(d >= tStart && d <= tEnd){
+            cell.fill = {type:"pattern", pattern:"solid", fgColor:{argb:statusColors[st] || statusColors.pendiente}};
+          } else if(d.getDay()===0 || d.getDay()===6){
+            cell.fill = weekendFill;
+          }
+        }
+        row.eachCell(cell=>{ cell.border = thinBorder; });
+        rowIdx++;
+      });
+    });
+    wsG.views = [{state:"frozen", xSplit:2, ySplit:1}];
+  }
+
   const wsE = wb.addWorksheet("Equipo");
   wsE.columns = [
     {header:"Nombre", key:"nombre", width:24},
