@@ -1,0 +1,1324 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Planificador — Gestión de tareas y equipos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F5F6F8;
+  --surface:#FFFFFF;
+  --ink:#1C2333;
+  --ink-soft:#5B6478;
+  --line:#E1E4EA;
+  --line-soft:#EEF0F3;
+  --accent:#2F6F5E;
+  --accent-soft:#DCEAE5;
+  --amber:#C98A2C;
+  --amber-soft:#F5E8D3;
+  --red:#C1443C;
+  --red-soft:#F6DEDC;
+  --grey:#8A93A6;
+  --grey-soft:#E7E9ED;
+  --weekend:#FAFAFB;
+  --today:#C1443C;
+  --radius:6px;
+  --shadow:0 1px 2px rgba(28,35,51,.06), 0 4px 10px rgba(28,35,51,.05);
+}
+*{box-sizing:border-box;}
+html,body{height:100%;}
+body{
+  margin:0;
+  font-family:'IBM Plex Sans',sans-serif;
+  background:var(--bg);
+  color:var(--ink);
+  font-size:14px;
+  line-height:1.45;
+}
+.mono{font-family:'IBM Plex Mono',monospace;}
+button{font-family:inherit;font-size:13px;cursor:pointer;}
+input,select,textarea{font-family:inherit;font-size:13px;}
+
+/* ---------- layout shell ---------- */
+.shell{display:flex;height:100vh;overflow:hidden;}
+.sidebar{
+  width:216px;flex:none;background:var(--ink);color:#fff;
+  display:flex;flex-direction:column;
+}
+.sidebar .brand{
+  padding:20px 18px 14px;border-bottom:1px solid rgba(255,255,255,.08);
+}
+.sidebar .brand .name{font-weight:600;font-size:15px;letter-spacing:.01em;}
+.sidebar .brand .name input{
+  background:transparent;border:none;color:#fff;font-weight:600;font-size:15px;
+  width:100%;padding:0;outline:none;
+}
+.sidebar .brand .sub{color:rgba(255,255,255,.5);font-size:12px;margin-top:3px;}
+.nav{padding:10px 10px;display:flex;flex-direction:column;gap:2px;}
+.nav button{
+  background:none;border:none;color:rgba(255,255,255,.72);text-align:left;
+  padding:9px 10px;border-radius:var(--radius);font-size:13.5px;font-weight:500;
+  display:flex;align-items:center;gap:9px;
+}
+.nav button:hover{background:rgba(255,255,255,.06);color:#fff;}
+.nav button.active{background:var(--accent);color:#fff;}
+.nav .dot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.55;}
+.sidebar-foot{margin-top:auto;padding:14px;border-top:1px solid rgba(255,255,255,.08);display:flex;gap:6px;}
+.sidebar-foot button{
+  flex:1;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);color:#fff;
+  border-radius:var(--radius);padding:7px 6px;font-size:12px;
+}
+.sidebar-foot button:hover{background:rgba(255,255,255,.14);}
+.sync-status{padding:0 14px 10px;font-size:11.5px;color:rgba(255,255,255,.5);display:flex;align-items:center;gap:6px;}
+.sync-dot{width:6px;height:6px;border-radius:50%;background:var(--grey);flex:none;}
+.sync-dot.ok{background:#4CAF7D;}
+.sync-dot.err{background:var(--red);}
+.sync-dot.pending{background:var(--amber);}
+
+.main{flex:1;display:flex;flex-direction:column;min-width:0;}
+.topbar{
+  height:56px;flex:none;background:var(--surface);border-bottom:1px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;padding:0 20px;
+}
+.topbar h1{font-size:16px;margin:0;font-weight:600;}
+.topbar .stats{display:flex;gap:16px;color:var(--ink-soft);font-size:12.5px;}
+.topbar .stats b{color:var(--ink);font-weight:600;}
+.view{flex:1;overflow:auto;padding:20px;}
+
+.btn{
+  background:var(--ink);color:#fff;border:none;border-radius:var(--radius);
+  padding:8px 14px;font-weight:500;font-size:13px;
+}
+.btn:hover{background:#0f1420;}
+.btn.accent{background:var(--accent);}
+.btn.accent:hover{background:#265b4d;}
+.btn.ghost{background:var(--surface);color:var(--ink);border:1px solid var(--line);}
+.btn.ghost:hover{background:var(--line-soft);}
+.btn.small{padding:5px 10px;font-size:12px;}
+.btn.danger{background:var(--red);}
+
+/* ---------- badges ---------- */
+.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:500;}
+.badge.pendiente{background:var(--grey-soft);color:#5B6478;}
+.badge.en_curso{background:var(--amber-soft);color:#8a5f1d;}
+.badge.completado{background:var(--accent-soft);color:#1f4e42;}
+.badge.atrasado{background:var(--red-soft);color:#8f2f29;}
+.prio{width:7px;height:7px;border-radius:50%;display:inline-block;}
+.prio.alta{background:var(--red);}
+.prio.media{background:var(--amber);}
+.prio.baja{background:var(--grey);}
+
+/* ================= GANTT ================= */
+.gantt-wrap{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:var(--shadow);}
+.gantt-left{width:300px;flex:none;border-right:1px solid var(--line);}
+.gantt-left .head{height:56px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 14px;font-weight:600;font-size:12.5px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;background:var(--line-soft);}
+.stage-row{
+  padding:9px 14px;font-weight:600;font-size:12.5px;color:var(--ink);
+  background:var(--bg);border-bottom:1px solid var(--line);border-top:1px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;gap:6px;height:36px;
+}
+.stage-row .swatch{width:9px;height:9px;border-radius:2px;flex:none;}
+.stage-row .stage-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:8px;}
+.stage-row .icon-btn{opacity:0;background:none;border:none;color:var(--ink-soft);padding:2px;}
+.stage-row:hover .icon-btn{opacity:1;}
+.task-row-label{
+  height:36px;display:flex;align-items:center;padding:0 14px 0 26px;border-bottom:1px solid var(--line-soft);
+  gap:8px;font-size:13px;
+}
+.task-row-label:hover{background:var(--line-soft);cursor:pointer;}
+.task-row-label .tname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
+.task-row-label .who{color:var(--ink-soft);font-size:11.5px;flex:none;}
+
+.gantt-right{flex:1;overflow:auto;position:relative;}
+.gantt-header{position:sticky;top:0;z-index:3;background:var(--surface);}
+.gantt-header .months{display:flex;height:26px;border-bottom:1px solid var(--line-soft);}
+.gantt-header .month-cell{
+  border-right:1px solid var(--line-soft);font-size:11px;font-weight:600;color:var(--ink-soft);
+  display:flex;align-items:center;padding-left:6px;flex:none;
+}
+.gantt-header .days{display:flex;height:30px;border-bottom:1px solid var(--line);}
+.day-cell{
+  flex:none;border-right:1px solid var(--line-soft);display:flex;align-items:center;justify-content:center;
+  font-size:10.5px;color:var(--ink-soft);
+}
+.day-cell.weekend{background:var(--weekend);}
+.gantt-body{position:relative;}
+.grid-col{position:absolute;top:0;bottom:0;border-right:1px solid var(--line-soft);}
+.grid-col.weekend{background:var(--weekend);}
+.grid-row{
+  height:36px;border-bottom:1px solid var(--line-soft);position:relative;
+}
+.grid-row.stage-spacer{height:36px;background:var(--bg);border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
+.today-line{position:absolute;top:0;bottom:0;width:2px;background:var(--today);z-index:2;}
+.today-flag{position:absolute;top:-1px;background:var(--today);color:#fff;font-size:9.5px;font-weight:600;padding:1px 5px;border-radius:3px;transform:translateX(-50%);white-space:nowrap;z-index:3;}
+
+.gbar{
+  position:absolute;top:6px;height:24px;border-radius:5px;cursor:grab;
+  display:flex;align-items:center;padding:0 8px;overflow:hidden;
+  font-size:11.5px;font-weight:500;color:#fff;white-space:nowrap;
+  box-shadow:0 1px 2px rgba(0,0,0,.15);
+}
+.gbar:active{cursor:grabbing;}
+.gbar .fill{position:absolute;left:0;top:0;bottom:0;background:rgba(255,255,255,.32);border-radius:5px 0 0 5px;}
+.gbar .label{position:relative;z-index:1;}
+.gbar .handle{position:absolute;top:0;bottom:0;width:8px;cursor:ew-resize;z-index:2;}
+.gbar .handle.l{left:0;}
+.gbar .handle.r{right:0;}
+.gbar.pendiente{background:var(--grey);}
+.gbar.en_curso{background:var(--amber);}
+.gbar.completado{background:var(--accent);}
+.gbar.atrasado{background:var(--red);}
+
+.gantt-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:12px;flex-wrap:wrap;}
+.zoom-ctrl{display:flex;align-items:center;gap:8px;color:var(--ink-soft);font-size:12.5px;}
+.zoom-ctrl input[type=range]{width:100px;}
+
+/* ================= KANBAN ================= */
+.kanban{display:flex;gap:14px;align-items:flex-start;}
+.kcol{background:var(--surface);border:1px solid var(--line);border-radius:8px;width:290px;flex:none;box-shadow:var(--shadow);}
+.kcol .khead{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;}
+.kcol .khead .title{font-weight:600;font-size:13px;}
+.kcol .khead .count{background:var(--line-soft);color:var(--ink-soft);border-radius:999px;padding:1px 8px;font-size:11.5px;}
+.kbody{padding:10px;min-height:60px;display:flex;flex-direction:column;gap:8px;}
+.kbody.dragover{background:var(--accent-soft);}
+.kcard{
+  background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:10px 11px;cursor:grab;
+}
+.kcard:hover{border-color:var(--ink-soft);}
+.kcard .ktitle{font-weight:500;font-size:13px;margin-bottom:6px;}
+.kcard .kmeta{display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:var(--ink-soft);}
+.kcard .kstage{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:5px;}
+.kprogress{height:4px;background:var(--line-soft);border-radius:2px;margin-top:8px;overflow:hidden;}
+.kprogress .f{height:100%;background:var(--accent);}
+
+/* ================= TABLE ================= */
+table.data{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:var(--shadow);}
+table.data thead th{
+  text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);
+  background:var(--line-soft);padding:10px 12px;border-bottom:1px solid var(--line);font-weight:600;
+}
+table.data tbody td{padding:10px 12px;border-bottom:1px solid var(--line-soft);font-size:13px;}
+table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
+.filters{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
+.filters select,.filters input{border:1px solid var(--line);border-radius:var(--radius);padding:7px 10px;background:var(--surface);}
+
+/* ================= TEAM ================= */
+.team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px;}
+.member-card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;box-shadow:var(--shadow);}
+.member-card .mhead{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.avatar{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:13px;flex:none;}
+.member-card .mname{font-weight:600;font-size:14px;}
+.member-card .mload{font-size:12px;color:var(--ink-soft);}
+.load-bar{height:6px;background:var(--line-soft);border-radius:3px;overflow:hidden;margin:10px 0;}
+.load-bar .f{height:100%;background:var(--accent);}
+.member-tasks{display:flex;flex-direction:column;gap:5px;}
+.member-tasks .mt{font-size:12px;color:var(--ink-soft);display:flex;justify-content:space-between;gap:6px;}
+.member-tasks .mt span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* ================= MODAL ================= */
+.overlay{position:fixed;inset:0;background:rgba(20,24,34,.42);display:none;align-items:flex-start;justify-content:center;z-index:50;padding:5vh 16px;overflow:auto;}
+.overlay.show{display:flex;}
+.modal{background:var(--surface);border-radius:10px;width:460px;max-width:100%;box-shadow:0 20px 50px rgba(0,0,0,.25);}
+.modal .mtitle{padding:16px 20px;border-bottom:1px solid var(--line);font-weight:600;font-size:15px;display:flex;justify-content:space-between;align-items:center;}
+.modal .mtitle button{background:none;border:none;color:var(--ink-soft);font-size:18px;line-height:1;}
+.modal .mbody{padding:18px 20px;display:flex;flex-direction:column;gap:12px;}
+.field label{display:block;font-size:12px;color:var(--ink-soft);margin-bottom:5px;font-weight:500;}
+.field input,.field select,.field textarea{
+  width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);
+}
+.field textarea{resize:vertical;min-height:56px;}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.modal .mfoot{padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;}
+.slider-row{display:flex;align-items:center;gap:10px;}
+.slider-row input[type=range]{flex:1;}
+.slider-row .val{width:34px;text-align:right;font-size:12.5px;color:var(--ink-soft);}
+.chk-item{display:flex;align-items:center;gap:8px;font-size:13px;}
+.chk-item input[type=text]{flex:1;border:1px solid var(--line);border-radius:var(--radius);padding:6px 8px;background:var(--bg);}
+.chk-item .rm{background:none;border:none;color:var(--ink-soft);font-size:15px;line-height:1;padding:2px 4px;}
+.chk-item .rm:hover{color:var(--red);}
+.dep-tag{display:inline-block;background:var(--line-soft);border-radius:5px;padding:1px 7px;font-size:11px;color:var(--ink-soft);margin-right:4px;}
+.checklist-mini{margin-top:6px;}
+.checklist-mini .row{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-soft);}
+.dep-line{stroke:var(--grey);stroke-width:1.5;fill:none;}
+.dep-line.blocked{stroke:var(--red);}
+.dep-arrow{fill:var(--grey);}
+.dep-arrow.blocked{fill:var(--red);}
+
+.empty{padding:40px 20px;text-align:center;color:var(--ink-soft);}
+.empty .btn{margin-top:10px;}
+::-webkit-scrollbar{height:10px;width:10px;}
+::-webkit-scrollbar-thumb{background:#D3D7DE;border-radius:5px;}
+::-webkit-scrollbar-track{background:transparent;}
+
+/* ================= REMOTE CHANGE BANNER ================= */
+#remoteBanner{
+  display:none;position:fixed;top:14px;left:50%;transform:translateX(-50%);
+  background:var(--ink);color:#fff;padding:10px 12px 10px 16px;border-radius:9px;
+  box-shadow:0 10px 30px rgba(0,0,0,.3);z-index:100;font-size:13px;
+  align-items:center;gap:12px;max-width:92vw;
+}
+#remoteBanner .txt{white-space:nowrap;}
+#remoteBanner .btn{white-space:nowrap;}
+#remoteBanner .btn.ghost{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.25);}
+#remoteBanner .btn.ghost:hover{background:rgba(255,255,255,.2);}
+</style>
+</head>
+<body>
+
+<div id="remoteBanner">
+  <span class="txt">Tu compañera hizo cambios en la sala. ¿Los traés?</span>
+  <button class="btn accent small" id="remoteBannerApply">Traer cambios</button>
+  <button class="btn ghost small" id="remoteBannerDismiss">Ignorar</button>
+</div>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="name"><input id="projectName" value="Proyecto sin nombre"></div>
+      <div class="sub">Planificador de equipo</div>
+    </div>
+    <nav class="nav">
+      <button data-view="gantt" class="active"><span class="dot"></span>Gantt</button>
+      <button data-view="kanban"><span class="dot"></span>Tablero</button>
+      <button data-view="table"><span class="dot"></span>Listado</button>
+      <button data-view="team"><span class="dot"></span>Equipo</button>
+    </nav>
+    <div class="sync-status" id="syncStatus"><span class="sync-dot" id="syncDot"></span><span id="syncText">Sincronización no configurada</span></div>
+    <div class="sidebar-foot" style="flex-wrap:wrap;">
+      <button id="syncBtn" style="width:100%;margin-bottom:6px;">⚙ Sincronización</button>
+      <button id="exportBtn">Exportar</button>
+      <button id="importBtn">Importar</button>
+      <input type="file" id="importFile" accept="application/json" style="display:none">
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <h1 id="viewTitle">Diagrama de Gantt</h1>
+      <div class="stats" id="topStats"></div>
+    </div>
+    <div class="view" id="view"></div>
+  </div>
+</div>
+
+<!-- Modal: tarea -->
+<div class="overlay" id="taskOverlay">
+  <div class="modal">
+    <div class="mtitle"><span id="taskModalTitle">Nueva tarea</span><button id="taskClose">&times;</button></div>
+    <div class="mbody">
+      <div class="field"><label>Nombre de la tarea</label><input id="f_name" placeholder="Ej: Relevamiento de estanterías"></div>
+      <div class="row2">
+        <div class="field"><label>Etapa</label><select id="f_stage"></select></div>
+        <div class="field"><label>Responsable</label><select id="f_member"></select></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Inicio</label><input type="date" id="f_start"></div>
+        <div class="field"><label>Fin</label><input type="date" id="f_end"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Estado</label>
+          <select id="f_status">
+            <option value="pendiente">Pendiente</option>
+            <option value="en_curso">En curso</option>
+            <option value="completado">Completado</option>
+          </select>
+        </div>
+        <div class="field"><label>Prioridad</label>
+          <select id="f_priority">
+            <option value="alta">Alta</option>
+            <option value="media" selected>Media</option>
+            <option value="baja">Baja</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Avance</label>
+        <div class="slider-row"><input type="range" id="f_progress" min="0" max="100" value="0"><span class="val" id="f_progress_val">0%</span></div>
+      </div>
+      <div class="field">
+        <label>Depende de (debe terminar antes de empezar esta)</label>
+        <select id="f_depends" multiple size="3"></select>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Criterio de aceptación</label><textarea id="f_acceptance" placeholder="¿Cuándo se considera terminada?"></textarea></div>
+        <div class="field"><label>Riesgos</label><textarea id="f_risks" placeholder="Qué podría atrasarla o complicarla"></textarea></div>
+      </div>
+      <div class="field"><label>Notas</label><textarea id="f_notes" placeholder="Observaciones adicionales..."></textarea></div>
+      <div class="field">
+        <label>Subtareas</label>
+        <div id="f_checklist" style="display:flex;flex-direction:column;gap:6px;"></div>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+          <input id="f_checklist_new" placeholder="Agregar subtarea..." style="flex:1;">
+          <button class="btn ghost small" id="f_checklist_add" type="button">+ Agregar</button>
+        </div>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn danger" id="taskDelete">Eliminar</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" id="taskDuplicate">Duplicar</button>
+        <button class="btn ghost" id="taskCancel">Cancelar</button>
+        <button class="btn accent" id="taskSave">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: etapa -->
+<div class="overlay" id="stageOverlay">
+  <div class="modal">
+    <div class="mtitle"><span id="stageModalTitle">Nueva etapa</span><button id="stageClose">&times;</button></div>
+    <div class="mbody">
+      <div class="field"><label>Nombre de la etapa</label><input id="s_name" placeholder="Ej: Depósito 4 — Iluminación"></div>
+      <div class="field"><label>Color</label>
+        <select id="s_color">
+          <option value="#2F6F5E">Verde azulado</option>
+          <option value="#C98A2C">Ámbar</option>
+          <option value="#5468C4">Azul</option>
+          <option value="#8A5FBF">Violeta</option>
+          <option value="#C1443C">Rojo</option>
+          <option value="#3D7A99">Celeste</option>
+        </select>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn danger" id="stageDelete">Eliminar etapa</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" id="stageCancel">Cancelar</button>
+        <button class="btn accent" id="stageSave">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: miembro -->
+<div class="overlay" id="memberOverlay">
+  <div class="modal">
+    <div class="mtitle"><span>Nuevo integrante</span><button id="memberClose">&times;</button></div>
+    <div class="mbody">
+      <div class="field"><label>Nombre</label><input id="m_name" placeholder="Ej: Ingrid Polli"></div>
+      <div class="field"><label>Rol</label><input id="m_role" placeholder="Ej: Ingeniería industrial"></div>
+    </div>
+    <div class="mfoot">
+      <div></div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" id="memberCancel">Cancelar</button>
+        <button class="btn accent" id="memberSave">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: sincronización -->
+<div class="overlay" id="syncOverlay">
+  <div class="modal" style="width:520px;">
+    <div class="mtitle"><span>Sincronización en vivo (Firebase)</span><button id="syncClose">&times;</button></div>
+    <div class="mbody">
+      <p style="margin:0;color:var(--ink-soft);font-size:12.5px;line-height:1.6;">
+        Los cambios se guardan en una <b>Realtime Database de Firebase</b> (gratuita) y aparecen al instante en todas
+        las pantallas conectadas a la misma <b>sala</b>, sin recargar la página — como en Google Sheets. Si dos
+        personas editan cosas distintas al mismo tiempo, cuando lleguen cambios de la otra persona vas a ver un aviso
+        arriba para traerlos, en vez de que se pisen solos. La configuración y la sala se guardan solo en el
+        navegador de cada persona.
+      </p>
+      <div class="field">
+        <label>Configuración de Firebase (pegá el objeto <span class="mono">firebaseConfig</span> completo)</label>
+        <textarea id="sy_config" rows="6" placeholder='{"apiKey":"...","authDomain":"...","databaseURL":"https://...firebaseio.com","projectId":"..."}'></textarea>
+      </div>
+      <div class="field">
+        <label>Clave de sala (usá la misma en ambas computadoras)</label>
+        <input type="text" id="sy_room" placeholder="Ej: equipo-deposito">
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn accent small" id="sy_connect">Conectar</button>
+        <button class="btn ghost small" id="sy_disconnect">Desconectar</button>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-soft);margin-top:2px;">
+        <input type="checkbox" id="sy_remember" checked>
+        Recordar en este navegador (si lo desmarcás, todo se borra solo al cerrar la pestaña)
+      </label>
+      <p id="sy_msg" style="margin:0;font-size:12px;color:var(--ink-soft);min-height:16px;"></p>
+      <div style="border-top:1px solid var(--line);padding-top:12px;">
+        <button class="btn danger small" id="sy_logout" style="width:100%;">Cerrar sesión y borrar datos de este dispositivo</button>
+        <p style="margin:6px 0 0;font-size:11.5px;color:var(--ink-soft);">No borra nada de la base de datos en la nube, solo lo guardado en esta computadora.</p>
+      </div>
+      <details style="font-size:12px;color:var(--ink-soft);">
+        <summary style="cursor:pointer;">¿Cómo lo configuro? (una sola vez)</summary>
+        <ol style="padding-left:18px;line-height:1.7;">
+          <li>Andá a <span class="mono">console.firebase.google.com</span> → "Crear proyecto" (es gratis, no pide tarjeta).</li>
+          <li>Dentro del proyecto: Build → Realtime Database → "Crear base de datos" → elegí "Iniciar en modo de prueba".</li>
+          <li>En ⚙ Configuración del proyecto → tus apps → agregar app Web (ícono <span class="mono">&lt;/&gt;</span>). Te va a mostrar un objeto <span class="mono">firebaseConfig</span>: copialo completo y pegalo arriba.</li>
+          <li>Elegí una "clave de sala" (cualquier palabra) y usá esa misma clave en la computadora de tu compañera.</li>
+          <li><b>Importante:</b> el "modo de prueba" deja la base abierta a cualquiera que tenga esos datos de configuración durante 30 días y después se cierra sola. Si querés que siga funcionando después, en Realtime Database → Reglas poné <span class="mono">{"rules":{".read":true,".write":true}}</span>. Eso es cómodo para ustedes dos pero significa que cualquiera con esa configuración podría leer o escribir esos datos — no la compartas más que con las personas del equipo.</li>
+        </ol>
+      </details>
+    </div>
+    <div class="mfoot">
+      <div></div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" id="syncCancel">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script>
+(function(){
+"use strict";
+
+const STORAGE_KEY = "planificador_data_v1";
+const DAY = 86400000;
+const memberPalette = ["#2F6F5E","#5468C4","#C98A2C","#8A5FBF","#3D7A99","#B0555A"];
+
+function uid(){ return Math.random().toString(36).slice(2,10); }
+function fmtDate(d){ return d.toISOString().slice(0,10); }
+function parseDate(s){ const d=new Date(s+"T00:00:00"); return d; }
+function daysBetween(a,b){ return Math.round((b-a)/DAY); }
+function todayStr(){ const t=new Date(); t.setHours(0,0,0,0); return fmtDate(t); }
+function clamp(n,min,max){ return Math.max(min,Math.min(max,n)); }
+function nowTime(){ return new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}); }
+
+function seedData(){
+  const s1=uid(), s2=uid(), s3=uid();
+  const m1=uid(), m2=uid(), m3=uid();
+  const start = new Date(); start.setHours(0,0,0,0);
+  const addDays=(n)=>fmtDate(new Date(start.getTime()+n*DAY));
+  return {
+    projectName: "Proyecto sin nombre",
+    stages: [
+      {id:s1, name:"Relevamiento y diagnóstico", color:"#2F6F5E"},
+      {id:s2, name:"Diseño e implementación", color:"#C98A2C"},
+      {id:s3, name:"Capacitación y cierre", color:"#5468C4"},
+    ],
+    members: [
+      {id:m1, name:"Responsable 1", role:"Coordinación"},
+      {id:m2, name:"Responsable 2", role:"Ejecución"},
+      {id:m3, name:"Responsable 3", role:"Soporte"},
+    ],
+    tasks: [
+      {id:uid(), name:"Relevamiento AS-IS", stageId:s1, memberId:m1, start:addDays(-3), end:addDays(2), status:"en_curso", priority:"alta", progress:55, notes:""},
+      {id:uid(), name:"Entrevistas con áreas", stageId:s1, memberId:m2, start:addDays(0), end:addDays(4), status:"pendiente", priority:"media", progress:0, notes:""},
+      {id:uid(), name:"Diseño TO-BE", stageId:s2, memberId:m1, start:addDays(5), end:addDays(12), status:"pendiente", priority:"alta", progress:0, notes:""},
+      {id:uid(), name:"Implementación de layout", stageId:s2, memberId:m3, start:addDays(10), end:addDays(18), status:"pendiente", priority:"media", progress:0, notes:""},
+      {id:uid(), name:"Capacitación de uso", stageId:s3, memberId:m2, start:addDays(19), end:addDays(23), status:"pendiente", priority:"baja", progress:0, notes:""},
+    ]
+  };
+}
+
+function load(){
+  try{
+    const raw = activeStorage().getItem(STORAGE_KEY);
+    if(raw) return JSON.parse(raw);
+  }catch(e){}
+  return seedData();
+}
+function save(){
+  try{ activeStorage().setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+  scheduleSync();
+}
+
+/* ---------------- Almacenamiento local: recordar o no en este dispositivo ---------------- */
+const REMEMBER_KEY = "planificador_remember_v1";
+function getRemember(){ return localStorage.getItem(REMEMBER_KEY) !== "0"; }
+function setRemember(v){ localStorage.setItem(REMEMBER_KEY, v ? "1" : "0"); }
+function activeStorage(){ return getRemember() ? localStorage : sessionStorage; }
+
+function wipeThisDevice(){
+  [STORAGE_KEY, SYNC_KEY].forEach(k=>{
+    try{ localStorage.removeItem(k); }catch(e){}
+    try{ sessionStorage.removeItem(k); }catch(e){}
+  });
+  try{ localStorage.removeItem(REMEMBER_KEY); }catch(e){}
+  location.reload();
+}
+
+/* ---------------- Sync en vivo (Firebase Realtime Database) ---------------- */
+const SYNC_KEY = "planificador_sync_v1";
+const clientId = uid(); // identifica a este navegador/pestaña para no reaccionar a sus propios cambios
+let syncTimer = null;
+let fbApp = null, fbDb = null, fbRoomRef = null, fbListenerFn = null;
+let pendingRemoteState = null;
+let suppressNextLocalPush = false; // evita reenviar lo que acabamos de traer del servidor
+
+function loadSyncConfig(){
+  try{ return JSON.parse(activeStorage().getItem(SYNC_KEY)) || null; }catch(e){ return null; }
+}
+function saveSyncConfig(cfg){ try{ activeStorage().setItem(SYNC_KEY, JSON.stringify(cfg)); }catch(e){} }
+function clearSyncConfig(){
+  try{ localStorage.removeItem(SYNC_KEY); }catch(e){}
+  try{ sessionStorage.removeItem(SYNC_KEY); }catch(e){}
+}
+
+function setSyncStatus(mode, text){
+  const dot = document.getElementById("syncDot");
+  const label = document.getElementById("syncText");
+  if(!dot || !label) return;
+  dot.className = "sync-dot" + (mode ? " "+mode : "");
+  label.textContent = text;
+}
+
+function scheduleSync(){
+  if(suppressNextLocalPush){ suppressNextLocalPush = false; return; }
+  if(!fbRoomRef) return;
+  setSyncStatus("pending", "Cambios sin sincronizar…");
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(pushToFirebase, 1500);
+}
+
+function pushToFirebase(){
+  if(!fbRoomRef) return;
+  fbRoomRef.set({data: state, updatedBy: clientId, updatedAt: Date.now()})
+    .then(()=> setSyncStatus("ok", "Sincronizado " + nowTime()))
+    .catch(()=> setSyncStatus("err", "Error al sincronizar (revisá la configuración)"));
+}
+
+function showRemoteChangeBanner(){
+  document.getElementById("remoteBanner").style.display = "flex";
+}
+function hideRemoteChangeBanner(){
+  document.getElementById("remoteBanner").style.display = "none";
+  pendingRemoteState = null;
+}
+
+function connectFirebase(config, room){
+  disconnectFirebase();
+  try{
+    fbApp = firebase.initializeApp(config, "planificador-"+Date.now());
+    fbDb = firebase.database(fbApp);
+    fbRoomRef = fbDb.ref("salas/" + room);
+    setSyncStatus("pending", "Conectando…");
+    fbListenerFn = fbRoomRef.on("value", snap=>{
+      const val = snap.val();
+      if(!val || !val.data){
+        // la sala está vacía: la inicializamos con lo que tenemos localmente
+        pushToFirebase();
+        setSyncStatus("ok", "Conectado — sala inicializada con tus datos");
+        return;
+      }
+      if(val.updatedBy === clientId){
+        // es el eco de nuestro propio push
+        setSyncStatus("ok", "Sincronizado " + nowTime());
+        return;
+      }
+      const remoteStr = JSON.stringify(val.data);
+      if(remoteStr === JSON.stringify(state)){
+        setSyncStatus("ok", "Sincronizado " + nowTime());
+        return;
+      }
+      pendingRemoteState = val.data;
+      showRemoteChangeBanner();
+      setSyncStatus("ok", "Hay cambios nuevos de tu compañera");
+    }, err=>{
+      setSyncStatus("err", "Error de conexión (revisá la configuración pegada)");
+    });
+  }catch(e){
+    setSyncStatus("err", "No se pudo conectar (revisá el JSON pegado)");
+    fbApp = null; fbDb = null; fbRoomRef = null;
+  }
+}
+
+function disconnectFirebase(){
+  if(fbRoomRef && fbListenerFn) fbRoomRef.off("value", fbListenerFn);
+  if(fbApp){ try{ fbApp.delete(); }catch(e){} }
+  fbApp = null; fbDb = null; fbRoomRef = null; fbListenerFn = null;
+  hideRemoteChangeBanner();
+}
+
+function initSyncUI(){
+  const cfg = loadSyncConfig();
+  if(cfg && cfg.config && cfg.room){
+    connectFirebase(cfg.config, cfg.room);
+  } else {
+    setSyncStatus("", "Sincronización no configurada");
+  }
+
+  document.getElementById("remoteBannerApply").onclick = ()=>{
+    if(pendingRemoteState){
+      suppressNextLocalPush = true;
+      state = pendingRemoteState;
+      try{ activeStorage().setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+      el("projectName").value = state.projectName || "Proyecto sin nombre";
+      render();
+    }
+    hideRemoteChangeBanner();
+    setSyncStatus("ok", "Sincronizado " + nowTime());
+  };
+  document.getElementById("remoteBannerDismiss").onclick = hideRemoteChangeBanner;
+
+  el("syncBtn").addEventListener("click", ()=>{
+    const c = loadSyncConfig() || {};
+    el("sy_config").value = c.config ? JSON.stringify(c.config, null, 2) : "";
+    el("sy_room").value = c.room || "";
+    el("sy_remember").checked = getRemember();
+    el("sy_msg").textContent = "";
+    el("syncOverlay").classList.add("show");
+  });
+  el("syncClose").onclick = el("syncCancel").onclick = ()=>el("syncOverlay").classList.remove("show");
+
+  el("sy_connect").onclick = ()=>{
+    let parsed;
+    try{ parsed = JSON.parse(el("sy_config").value.trim()); }
+    catch(e){ el("sy_msg").textContent = "El JSON de configuración no es válido. Copialo tal cual te lo mostró Firebase."; return; }
+    const room = el("sy_room").value.trim();
+    if(!room){ el("sy_msg").textContent = "Falta la clave de sala."; return; }
+    if(!parsed.databaseURL){ el("sy_msg").textContent = "Esa configuración no tiene databaseURL: asegurate de haber creado la Realtime Database antes de copiarla."; return; }
+
+    const remember = el("sy_remember").checked;
+    if(remember !== getRemember()){
+      const projectRaw = JSON.stringify(state);
+      clearSyncConfig();
+      try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
+      try{ sessionStorage.removeItem(STORAGE_KEY); }catch(e){}
+      setRemember(remember);
+      try{ activeStorage().setItem(STORAGE_KEY, projectRaw); }catch(e){}
+    }
+    saveSyncConfig({config: parsed, room});
+    el("sy_msg").textContent = "Conectando…";
+    connectFirebase(parsed, room);
+    el("syncOverlay").classList.remove("show");
+  };
+
+  el("sy_disconnect").onclick = ()=>{
+    disconnectFirebase();
+    clearSyncConfig();
+    el("sy_config").value = ""; el("sy_room").value = "";
+    el("sy_msg").textContent = "Desconectado. Los datos siguen guardados localmente.";
+    setSyncStatus("", "Sincronización no configurada");
+  };
+
+  el("sy_logout").onclick = ()=>{
+    if(confirm("¿Borrar los datos y la configuración de sincronización guardados en esta computadora? La base de datos en la nube no se toca.")){
+      wipeThisDevice();
+    }
+  };
+}
+
+let state = load();
+let currentView = "gantt";
+let dayWidth = 30;
+let editingTaskId = null;
+let editingStageId = null;
+
+const el = (id)=>document.getElementById(id);
+const viewEl = el("view");
+
+function computeStatus(t){
+  if(t.status === "completado") return "completado";
+  if(t.end < todayStr() && t.status !== "completado") return "atrasado";
+  return t.status;
+}
+function statusLabel(s){
+  return {pendiente:"Pendiente", en_curso:"En curso", completado:"Completado", atrasado:"Atrasado"}[s] || s;
+}
+function memberById(id){ return state.members.find(m=>m.id===id); }
+function stageById(id){ return state.stages.find(s=>s.id===id); }
+function tasksByStage(stageId){ return state.tasks.filter(t=>t.stageId===stageId); }
+
+/* ---------------- nav ---------------- */
+document.querySelectorAll(".nav button").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    document.querySelectorAll(".nav button").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    currentView = btn.dataset.view;
+    const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo"};
+    el("viewTitle").textContent = titles[currentView];
+    render();
+  });
+});
+
+el("projectName").addEventListener("input", e=>{
+  state.projectName = e.target.value;
+  save();
+});
+
+function updateTopStats(){
+  const total = state.tasks.length;
+  const done = state.tasks.filter(t=>t.status==="completado").length;
+  const late = state.tasks.filter(t=>computeStatus(t)==="atrasado").length;
+  el("topStats").innerHTML =
+    `<span><b>${total}</b> tareas</span><span><b>${done}</b> completadas</span><span style="color:${late?'var(--red)':'var(--ink-soft)'}"><b>${late}</b> atrasadas</span>`;
+}
+
+function render(){
+  updateTopStats();
+  if(currentView==="gantt") renderGantt();
+  else if(currentView==="kanban") renderKanban();
+  else if(currentView==="table") renderTable();
+  else if(currentView==="team") renderTeam();
+}
+
+/* ================= GANTT ================= */
+function renderGantt(){
+  if(state.tasks.length===0){
+    viewEl.innerHTML = `<div class="empty">Todavía no hay tareas.<br><button class="btn accent" id="addFirstTask">Crear la primera tarea</button></div>`;
+    el("addFirstTask").onclick = ()=>openTaskModal(null, state.stages[0]?.id);
+    return;
+  }
+
+  let minDate = parseDate(state.tasks.reduce((a,t)=>t.start<a?t.start:a, state.tasks[0].start));
+  let maxDate = parseDate(state.tasks.reduce((a,t)=>t.end>a?t.end:a, state.tasks[0].end));
+  minDate = new Date(minDate.getTime() - 4*DAY);
+  maxDate = new Date(maxDate.getTime() + 8*DAY);
+  const totalDays = daysBetween(minDate, maxDate);
+  const totalWidth = totalDays * dayWidth;
+
+  let html = `<div class="gantt-toolbar">
+    <div style="display:flex;gap:8px;">
+      <button class="btn accent small" id="newTaskBtn">+ Nueva tarea</button>
+      <button class="btn ghost small" id="newStageBtn">+ Nueva etapa</button>
+    </div>
+    <div class="zoom-ctrl">Zoom <input type="range" id="zoomRange" min="16" max="56" value="${dayWidth}"></div>
+  </div>`;
+
+  html += `<div class="gantt-wrap"><div class="gantt-left"><div class="head">Tarea</div>`;
+  state.stages.forEach(stage=>{
+    html += `<div class="stage-row" data-stage="${stage.id}">
+      <div class="stage-name"><span class="swatch" style="background:${stage.color}"></span>${stage.name}</div>
+      <button class="icon-btn edit-stage" data-stage="${stage.id}" title="Editar etapa">✎</button>
+    </div>`;
+    tasksByStage(stage.id).forEach(t=>{
+      const mem = memberById(t.memberId);
+      html += `<div class="task-row-label" data-task="${t.id}">
+        <span class="prio ${t.priority}"></span>
+        <span class="tname">${escapeHtml(t.name)}</span>
+        <span class="who">${mem?escapeHtml(mem.name.split(" ")[0]):""}</span>
+      </div>`;
+    });
+  });
+  html += `</div>`;
+
+  // right timeline
+  html += `<div class="gantt-right" id="ganttScroll"><div class="gantt-header" style="width:${totalWidth}px">`;
+  html += `<div class="months">${buildMonths(minDate, totalDays)}</div>`;
+  html += `<div class="days">${buildDays(minDate, totalDays)}</div>`;
+  html += `</div>`;
+
+  html += `<div class="gantt-body" style="width:${totalWidth}px">`;
+  html += buildGridCols(minDate, totalDays);
+  const todayX = daysBetween(minDate, parseDate(todayStr())) * dayWidth;
+  if(todayX>=0 && todayX<=totalWidth){
+    html += `<div class="today-line" style="left:${todayX}px"></div><div class="today-flag" style="left:${todayX}px">Hoy</div>`;
+  }
+  const rowPos = {}; // taskId -> {top, x1, x2}
+  let y = 0;
+  state.stages.forEach(stage=>{
+    html += `<div class="grid-row stage-spacer"></div>`;
+    y += 36;
+    tasksByStage(stage.id).forEach(t=>{
+      const x1 = daysBetween(minDate, parseDate(t.start)) * dayWidth;
+      const w = Math.max(dayWidth, (daysBetween(parseDate(t.start), parseDate(t.end))+1) * dayWidth - 2);
+      const st = computeStatus(t);
+      const blocked = (t.dependsOn||[]).some(depId=>{
+        const dep = state.tasks.find(d=>d.id===depId);
+        return dep && dep.end > t.start;
+      });
+      rowPos[t.id] = {top: y, x1, x2: x1+w};
+      html += `<div class="grid-row" data-row-task="${t.id}">
+        <div class="gbar ${st}" data-task="${t.id}" style="left:${x1}px;width:${w}px;${blocked?'outline:2px dashed var(--red);outline-offset:1px;':''}">
+          <div class="fill" style="width:${t.progress}%"></div>
+          <span class="label">${escapeHtml(t.name)} · ${t.progress}%</span>
+          <div class="handle l" data-task="${t.id}" data-side="l"></div>
+          <div class="handle r" data-task="${t.id}" data-side="r"></div>
+        </div>
+      </div>`;
+      y += 36;
+    });
+  });
+  const totalHeight = y;
+  html += buildDependencyLines(rowPos, minDate);
+  html += `</div></div></div>`;
+
+  viewEl.innerHTML = html;
+
+  el("newTaskBtn").onclick = ()=>openTaskModal(null, state.stages[0]?.id);
+  el("newStageBtn").onclick = ()=>openStageModal(null);
+  el("zoomRange").oninput = (e)=>{ dayWidth = parseInt(e.target.value); renderGantt(); };
+
+  viewEl.querySelectorAll(".task-row-label, .gbar .label").forEach(node=>{
+    node.addEventListener("click", (e)=>{
+      const id = node.dataset.task || node.closest("[data-task]")?.dataset.task;
+      if(id) openTaskModal(id);
+    });
+  });
+  viewEl.querySelectorAll(".edit-stage").forEach(btn=>{
+    btn.addEventListener("click",(e)=>{ e.stopPropagation(); openStageModal(btn.dataset.stage); });
+  });
+
+  attachGanttDrag(minDate);
+
+  // sync vertical scroll between left labels and right timeline
+  const leftPanel = viewEl.querySelector(".gantt-left");
+  const rightPanel = viewEl.querySelector(".gantt-right");
+  let syncing=false;
+  leftPanel.addEventListener("scroll",()=>{ if(syncing)return; syncing=true; rightPanel.scrollTop=leftPanel.scrollTop; syncing=false; });
+  rightPanel.addEventListener("scroll",()=>{ if(syncing)return; syncing=true; leftPanel.scrollTop=rightPanel.scrollTop; syncing=false; });
+}
+
+function buildMonths(minDate, totalDays){
+  let html="", i=0;
+  while(i<totalDays){
+    const d = new Date(minDate.getTime() + i*DAY);
+    const monthEnd = new Date(d.getFullYear(), d.getMonth()+1, 1);
+    const daysInMonth = Math.min(daysBetween(d, monthEnd), totalDays-i);
+    const label = d.toLocaleDateString("es-AR", {month:"long", year:"numeric"});
+    html += `<div class="month-cell" style="width:${daysInMonth*dayWidth}px">${label}</div>`;
+    i += daysInMonth;
+  }
+  return html;
+}
+function buildDays(minDate, totalDays){
+  let html="";
+  for(let i=0;i<totalDays;i++){
+    const d = new Date(minDate.getTime() + i*DAY);
+    const wd = d.getDay();
+    const weekend = wd===0||wd===6;
+    html += `<div class="day-cell ${weekend?'weekend':''}" style="width:${dayWidth}px">${d.getDate()}</div>`;
+  }
+  return html;
+}
+function buildGridCols(minDate, totalDays){
+  let html="";
+  for(let i=0;i<totalDays;i++){
+    const d = new Date(minDate.getTime() + i*DAY);
+    const wd = d.getDay();
+    if(wd===0||wd===6){
+      html += `<div class="grid-col weekend" style="left:${i*dayWidth}px;width:${dayWidth}px"></div>`;
+    }
+  }
+  return html;
+}
+function buildDependencyLines(rowPos, minDate){
+  const lines = [];
+  state.tasks.forEach(t=>{
+    (t.dependsOn||[]).forEach(depId=>{
+      const dep = rowPos[depId];
+      const cur = rowPos[t.id];
+      if(!dep || !cur) return;
+      const blocked = state.tasks.find(d=>d.id===depId).end > t.start;
+      const y1 = dep.top + 18, y2 = cur.top + 18;
+      const x1 = dep.x2, x2 = cur.x1;
+      const midX = x2 - 10 > x1 ? (x1+x2)/2 : x1 + 14;
+      const path = `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`;
+      lines.push(`<path class="dep-line ${blocked?'blocked':''}" d="${path}"></path>
+        <polygon class="dep-arrow ${blocked?'blocked':''}" points="${x2-6},${y2-4} ${x2},${y2} ${x2-6},${y2+4}"></polygon>`);
+    });
+  });
+  if(lines.length===0) return "";
+  return `<svg style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:1;">${lines.join("")}</svg>`;
+}
+
+function attachGanttDrag(minDate){
+  let dragging = null; // {taskId, mode:'move'|'l'|'r', startX, origStart, origEnd}
+  const scrollBox = el("ganttScroll");
+
+  viewEl.querySelectorAll(".gbar").forEach(bar=>{
+    bar.addEventListener("mousedown",(e)=>{
+      if(e.target.classList.contains("handle")) return;
+      e.preventDefault();
+      const id = bar.dataset.task;
+      const t = state.tasks.find(x=>x.id===id);
+      dragging = {taskId:id, mode:"move", startX:e.clientX, origStart:t.start, origEnd:t.end};
+    });
+  });
+  viewEl.querySelectorAll(".handle").forEach(h=>{
+    h.addEventListener("mousedown",(e)=>{
+      e.preventDefault(); e.stopPropagation();
+      const id = h.dataset.task;
+      const t = state.tasks.find(x=>x.id===id);
+      dragging = {taskId:id, mode:h.dataset.side, startX:e.clientX, origStart:t.start, origEnd:t.end};
+    });
+  });
+
+  function onMove(e){
+    if(!dragging) return;
+    const t = state.tasks.find(x=>x.id===dragging.taskId);
+    const deltaDays = Math.round((e.clientX - dragging.startX) / dayWidth);
+    if(dragging.mode==="move"){
+      const s = new Date(parseDate(dragging.origStart).getTime() + deltaDays*DAY);
+      const en = new Date(parseDate(dragging.origEnd).getTime() + deltaDays*DAY);
+      t.start = fmtDate(s); t.end = fmtDate(en);
+    } else if(dragging.mode==="l"){
+      const s = new Date(parseDate(dragging.origStart).getTime() + deltaDays*DAY);
+      if(s < parseDate(t.end)) t.start = fmtDate(s);
+    } else if(dragging.mode==="r"){
+      const en = new Date(parseDate(dragging.origEnd).getTime() + deltaDays*DAY);
+      if(en > parseDate(t.start)) t.end = fmtDate(en);
+    }
+    updateBarVisual(t, minDate);
+  }
+  function onUp(){
+    if(dragging){ save(); renderGantt(); }
+    dragging = null;
+  }
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+
+function updateBarVisual(t, minDate){
+  const bar = viewEl.querySelector(`.gbar[data-task="${t.id}"]`);
+  if(!bar) return;
+  const x1 = daysBetween(minDate, parseDate(t.start)) * dayWidth;
+  const w = Math.max(dayWidth, (daysBetween(parseDate(t.start), parseDate(t.end))+1) * dayWidth - 2);
+  bar.style.left = x1+"px";
+  bar.style.width = w+"px";
+}
+
+/* ================= KANBAN ================= */
+function renderKanban(){
+  const cols = [
+    {key:"pendiente", label:"Pendiente"},
+    {key:"en_curso", label:"En curso"},
+    {key:"completado", label:"Completado"},
+  ];
+  let html = `<div style="margin-bottom:14px;"><button class="btn accent small" id="newTaskBtnK">+ Nueva tarea</button></div><div class="kanban">`;
+  cols.forEach(col=>{
+    const items = state.tasks.filter(t=>t.status===col.key);
+    html += `<div class="kcol"><div class="khead"><span class="title">${col.label}</span><span class="count">${items.length}</span></div>
+      <div class="kbody" data-status="${col.key}">`;
+    items.forEach(t=>{
+      const stage = stageById(t.stageId);
+      const mem = memberById(t.memberId);
+      html += `<div class="kcard" draggable="true" data-task="${t.id}">
+        <div class="ktitle">${escapeHtml(t.name)}</div>
+        <div class="kmeta"><span><span class="kstage" style="background:${stage?stage.color:'#ccc'}"></span>${mem?escapeHtml(mem.name):"Sin asignar"}</span><span class="prio ${t.priority}"></span></div>
+        <div class="kprogress"><div class="f" style="width:${t.progress}%"></div></div>
+      </div>`;
+    });
+    html += `</div></div>`;
+  });
+  html += `</div>`;
+  viewEl.innerHTML = html;
+  el("newTaskBtnK").onclick = ()=>openTaskModal(null, state.stages[0]?.id);
+
+  viewEl.querySelectorAll(".kcard").forEach(card=>{
+    card.addEventListener("click", ()=>openTaskModal(card.dataset.task));
+    card.addEventListener("dragstart",(e)=>{
+      e.dataTransfer.setData("text/plain", card.dataset.task);
+    });
+  });
+  viewEl.querySelectorAll(".kbody").forEach(body=>{
+    body.addEventListener("dragover",(e)=>{ e.preventDefault(); body.classList.add("dragover"); });
+    body.addEventListener("dragleave",()=>body.classList.remove("dragover"));
+    body.addEventListener("drop",(e)=>{
+      e.preventDefault(); body.classList.remove("dragover");
+      const id = e.dataTransfer.getData("text/plain");
+      const t = state.tasks.find(x=>x.id===id);
+      if(t){
+        t.status = body.dataset.status;
+        if(t.status==="completado") t.progress = 100;
+        save(); render();
+      }
+    });
+  });
+}
+
+/* ================= TABLE ================= */
+function renderTable(){
+  let html = `<div class="filters">
+    <button class="btn accent small" id="newTaskBtnT">+ Nueva tarea</button>
+    <input id="filterSearch" placeholder="Buscar tarea..." style="min-width:180px;">
+    <select id="filterStage"><option value="">Todas las etapas</option>${state.stages.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("")}</select>
+    <select id="filterMember"><option value="">Todos los responsables</option>${state.members.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join("")}</select>
+    <select id="filterStatus"><option value="">Todos los estados</option><option value="pendiente">Pendiente</option><option value="en_curso">En curso</option><option value="completado">Completado</option><option value="atrasado">Atrasado</option></select>
+  </div>
+  <table class="data"><thead><tr>
+    <th data-sort="name" style="cursor:pointer;">Tarea ⇅</th><th data-sort="stage" style="cursor:pointer;">Etapa ⇅</th><th data-sort="member" style="cursor:pointer;">Responsable ⇅</th><th data-sort="start" style="cursor:pointer;">Inicio ⇅</th><th data-sort="end" style="cursor:pointer;">Fin ⇅</th><th data-sort="status" style="cursor:pointer;">Estado ⇅</th><th data-sort="progress" style="cursor:pointer;">Avance ⇅</th><th>Subtareas</th>
+  </tr></thead><tbody id="tblBody"></tbody></table>`;
+  viewEl.innerHTML = html;
+  el("newTaskBtnT").onclick = ()=>openTaskModal(null, state.stages[0]?.id);
+
+  let sortKey = null, sortDir = 1;
+  function draw(){
+    const fs = el("filterStage").value, fm = el("filterMember").value, fst = el("filterStatus").value;
+    const q = el("filterSearch").value.trim().toLowerCase();
+    let rows = state.tasks.filter(t=>{
+      if(fs && t.stageId!==fs) return false;
+      if(fm && t.memberId!==fm) return false;
+      if(fst && computeStatus(t)!==fst) return false;
+      if(q && !t.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    if(sortKey){
+      rows = rows.slice().sort((a,b)=>{
+        let va, vb;
+        if(sortKey==="stage"){ va=stageById(a.stageId)?.name||""; vb=stageById(b.stageId)?.name||""; }
+        else if(sortKey==="member"){ va=memberById(a.memberId)?.name||""; vb=memberById(b.memberId)?.name||""; }
+        else if(sortKey==="status"){ va=computeStatus(a); vb=computeStatus(b); }
+        else { va=a[sortKey]; vb=b[sortKey]; }
+        if(va<vb) return -1*sortDir; if(va>vb) return 1*sortDir; return 0;
+      });
+    }
+    el("tblBody").innerHTML = rows.map(t=>{
+      const stage = stageById(t.stageId), mem = memberById(t.memberId);
+      const st = computeStatus(t);
+      const cl = t.checklist||[];
+      const clDone = cl.filter(c=>c.done).length;
+      return `<tr data-task="${t.id}">
+        <td><span class="prio ${t.priority}" style="margin-right:6px;"></span>${escapeHtml(t.name)}${(t.dependsOn&&t.dependsOn.length)?` <span class="dep-tag">${t.dependsOn.length} dep.</span>`:""}</td>
+        <td>${stage?escapeHtml(stage.name):""}</td>
+        <td>${mem?escapeHtml(mem.name):"—"}</td>
+        <td class="mono">${t.start}</td>
+        <td class="mono">${t.end}</td>
+        <td><span class="badge ${st}">${statusLabel(st)}</span></td>
+        <td>${t.progress}%</td>
+        <td>${cl.length?`${clDone}/${cl.length}`:"—"}</td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="8" style="text-align:center;color:var(--ink-soft);padding:24px;">Sin resultados</td></tr>`;
+    el("tblBody").querySelectorAll("tr[data-task]").forEach(tr=>{
+      tr.addEventListener("click", ()=>openTaskModal(tr.dataset.task));
+    });
+  }
+  viewEl.querySelectorAll("th[data-sort]").forEach(th=>{
+    th.addEventListener("click", ()=>{
+      const k = th.dataset.sort;
+      if(sortKey===k) sortDir *= -1; else { sortKey=k; sortDir=1; }
+      draw();
+    });
+  });
+  el("filterSearch").oninput = draw;
+  el("filterStage").onchange = draw;
+  el("filterMember").onchange = draw;
+  el("filterStatus").onchange = draw;
+  draw();
+}
+
+/* ================= TEAM ================= */
+function renderTeam(){
+  let html = `<div style="margin-bottom:14px;"><button class="btn accent small" id="newMemberBtn">+ Nuevo integrante</button></div><div class="team-grid">`;
+  state.members.forEach((m,i)=>{
+    const tasks = state.tasks.filter(t=>t.memberId===m.id);
+    const active = tasks.filter(t=>t.status!=="completado").length;
+    const maxRef = Math.max(4, state.members.map(mm=>state.tasks.filter(t=>t.memberId===mm.id && t.status!=="completado").length).reduce((a,b)=>Math.max(a,b),1));
+    const color = memberPalette[i % memberPalette.length];
+    html += `<div class="member-card" data-member="${m.id}">
+      <div class="mhead">
+        <div class="avatar" style="background:${color}">${initials(m.name)}</div>
+        <div><div class="mname">${escapeHtml(m.name)}</div><div class="mload">${escapeHtml(m.role||"")}</div></div>
+      </div>
+      <div class="mload">${active} tarea(s) activa(s)</div>
+      <div class="load-bar"><div class="f" style="width:${clamp(active/maxRef*100,0,100)}%;background:${color}"></div></div>
+      <div class="member-tasks">
+        ${tasks.slice(0,4).map(t=>`<div class="mt"><span>${escapeHtml(t.name)}</span><span class="badge ${computeStatus(t)}">${statusLabel(computeStatus(t))}</span></div>`).join("")}
+        ${tasks.length>4?`<div class="mt"><span>+${tasks.length-4} más</span><span></span></div>`:""}
+        ${tasks.length===0?`<div class="mt"><span style="color:var(--grey)">Sin tareas asignadas</span></div>`:""}
+      </div>
+    </div>`;
+  });
+  html += `</div>`;
+  viewEl.innerHTML = html;
+  el("newMemberBtn").onclick = ()=>openMemberModal();
+}
+function initials(name){
+  return name.split(" ").filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join("");
+}
+
+/* ================= TASK MODAL ================= */
+let currentChecklist = [];
+
+function refreshSelectOptions(excludeId){
+  el("f_stage").innerHTML = state.stages.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("");
+  el("f_member").innerHTML = `<option value="">Sin asignar</option>` + state.members.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join("");
+  el("f_depends").innerHTML = state.tasks.filter(t=>t.id!==excludeId).map(t=>`<option value="${t.id}">${escapeHtml(t.name)}</option>`).join("");
+}
+function renderChecklistUI(){
+  el("f_checklist").innerHTML = currentChecklist.map((item,i)=>`
+    <div class="chk-item" data-i="${i}">
+      <input type="checkbox" ${item.done?"checked":""} class="chk-done">
+      <input type="text" value="${escapeAttr(item.text)}" class="chk-text">
+      <button type="button" class="rm chk-rm">&times;</button>
+    </div>`).join("") || `<span style="font-size:12px;color:var(--grey)">Sin subtareas todavía</span>`;
+  el("f_checklist").querySelectorAll(".chk-item").forEach(row=>{
+    const i = parseInt(row.dataset.i);
+    row.querySelector(".chk-done").onchange = e=>{ currentChecklist[i].done = e.target.checked; };
+    row.querySelector(".chk-text").oninput = e=>{ currentChecklist[i].text = e.target.value; };
+    row.querySelector(".chk-rm").onclick = ()=>{ currentChecklist.splice(i,1); renderChecklistUI(); };
+  });
+}
+el("f_checklist_add").addEventListener("click", ()=>{
+  const val = el("f_checklist_new").value.trim();
+  if(!val) return;
+  currentChecklist.push({id:uid(), text:val, done:false});
+  el("f_checklist_new").value = "";
+  renderChecklistUI();
+});
+el("f_checklist_new").addEventListener("keydown", e=>{
+  if(e.key==="Enter"){ e.preventDefault(); el("f_checklist_add").click(); }
+});
+
+function openTaskModal(taskId, defaultStageId){
+  editingTaskId = taskId;
+  refreshSelectOptions(taskId);
+  const isNew = !taskId;
+  el("taskModalTitle").textContent = isNew ? "Nueva tarea" : "Editar tarea";
+  el("taskDelete").style.display = isNew ? "none" : "inline-block";
+  el("taskDuplicate").style.display = isNew ? "none" : "inline-block";
+  if(isNew){
+    el("f_name").value = "";
+    el("f_stage").value = defaultStageId || state.stages[0]?.id || "";
+    el("f_member").value = "";
+    el("f_start").value = todayStr();
+    el("f_end").value = fmtDate(new Date(Date.now()+5*DAY));
+    el("f_status").value = "pendiente";
+    el("f_priority").value = "media";
+    el("f_progress").value = 0;
+    el("f_progress_val").textContent = "0%";
+    el("f_notes").value = "";
+    el("f_acceptance").value = "";
+    el("f_risks").value = "";
+    Array.from(el("f_depends").options).forEach(o=>o.selected=false);
+    currentChecklist = [];
+  } else {
+    const t = state.tasks.find(x=>x.id===taskId);
+    el("f_name").value = t.name;
+    el("f_stage").value = t.stageId;
+    el("f_member").value = t.memberId || "";
+    el("f_start").value = t.start;
+    el("f_end").value = t.end;
+    el("f_status").value = t.status;
+    el("f_priority").value = t.priority;
+    el("f_progress").value = t.progress;
+    el("f_progress_val").textContent = t.progress+"%";
+    el("f_notes").value = t.notes || "";
+    el("f_acceptance").value = t.acceptance || "";
+    el("f_risks").value = t.risks || "";
+    const deps = t.dependsOn || [];
+    Array.from(el("f_depends").options).forEach(o=>o.selected = deps.includes(o.value));
+    currentChecklist = (t.checklist || []).map(c=>({...c}));
+  }
+  renderChecklistUI();
+  el("taskOverlay").classList.add("show");
+}
+el("f_progress").addEventListener("input", e=>{ el("f_progress_val").textContent = e.target.value+"%"; });
+el("taskClose").onclick = el("taskCancel").onclick = ()=>el("taskOverlay").classList.remove("show");
+el("taskDelete").onclick = ()=>{
+  if(editingTaskId && confirm("¿Eliminar esta tarea?")){
+    const id = editingTaskId;
+    state.tasks = state.tasks.filter(t=>t.id!==id);
+    state.tasks.forEach(t=>{ if(t.dependsOn) t.dependsOn = t.dependsOn.filter(d=>d!==id); });
+    save(); el("taskOverlay").classList.remove("show"); render();
+  }
+};
+el("taskDuplicate").onclick = ()=>{
+  if(!editingTaskId) return;
+  const orig = state.tasks.find(t=>t.id===editingTaskId);
+  const copy = Object.assign({}, orig, {id:uid(), name: orig.name + " (copia)", checklist:(orig.checklist||[]).map(c=>({...c})), dependsOn:[...(orig.dependsOn||[])]});
+  state.tasks.push(copy);
+  save(); el("taskOverlay").classList.remove("show"); render();
+};
+el("taskSave").onclick = ()=>{
+  const name = el("f_name").value.trim();
+  if(!name){ el("f_name").focus(); return; }
+  let start = el("f_start").value, end = el("f_end").value;
+  if(end < start) end = start;
+  const dependsOn = Array.from(el("f_depends").selectedOptions).map(o=>o.value);
+  const data = {
+    name, stageId: el("f_stage").value, memberId: el("f_member").value || null,
+    start, end, status: el("f_status").value, priority: el("f_priority").value,
+    progress: parseInt(el("f_progress").value), notes: el("f_notes").value,
+    acceptance: el("f_acceptance").value, risks: el("f_risks").value,
+    dependsOn, checklist: currentChecklist
+  };
+  if(data.status==="completado") data.progress = 100;
+  if(editingTaskId){
+    Object.assign(state.tasks.find(t=>t.id===editingTaskId), data);
+  } else {
+    state.tasks.push(Object.assign({id:uid()}, data));
+  }
+  save(); el("taskOverlay").classList.remove("show"); render();
+};
+
+/* ================= STAGE MODAL ================= */
+function openStageModal(stageId){
+  editingStageId = stageId;
+  const isNew = !stageId;
+  el("stageModalTitle").textContent = isNew ? "Nueva etapa" : "Editar etapa";
+  el("stageDelete").style.display = isNew ? "none" : "inline-block";
+  if(isNew){
+    el("s_name").value = ""; el("s_color").value = "#2F6F5E";
+  } else {
+    const s = stageById(stageId);
+    el("s_name").value = s.name; el("s_color").value = s.color;
+  }
+  el("stageOverlay").classList.add("show");
+}
+el("stageClose").onclick = el("stageCancel").onclick = ()=>el("stageOverlay").classList.remove("show");
+el("stageDelete").onclick = ()=>{
+  if(editingStageId && confirm("¿Eliminar la etapa y sus tareas asociadas?")){
+    state.tasks = state.tasks.filter(t=>t.stageId!==editingStageId);
+    state.stages = state.stages.filter(s=>s.id!==editingStageId);
+    save(); el("stageOverlay").classList.remove("show"); render();
+  }
+};
+el("stageSave").onclick = ()=>{
+  const name = el("s_name").value.trim();
+  if(!name) return;
+  const color = el("s_color").value;
+  if(editingStageId){
+    Object.assign(stageById(editingStageId), {name, color});
+  } else {
+    state.stages.push({id:uid(), name, color});
+  }
+  save(); el("stageOverlay").classList.remove("show"); render();
+};
+
+/* ================= MEMBER MODAL ================= */
+function openMemberModal(){
+  el("m_name").value = ""; el("m_role").value = "";
+  el("memberOverlay").classList.add("show");
+}
+el("memberClose").onclick = el("memberCancel").onclick = ()=>el("memberOverlay").classList.remove("show");
+el("memberSave").onclick = ()=>{
+  const name = el("m_name").value.trim();
+  if(!name) return;
+  state.members.push({id:uid(), name, role: el("m_role").value.trim()});
+  save(); el("memberOverlay").classList.remove("show"); render();
+};
+
+/* ================= EXPORT / IMPORT ================= */
+el("exportBtn").onclick = ()=>{
+  const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = (state.projectName||"proyecto").replace(/\s+/g,"_")+".json";
+  a.click(); URL.revokeObjectURL(url);
+};
+el("importBtn").onclick = ()=> el("importFile").click();
+el("importFile").addEventListener("change", (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    try{
+      const data = JSON.parse(reader.result);
+      if(data.stages && data.tasks && data.members){
+        state = data;
+        save();
+        el("projectName").value = state.projectName || "Proyecto sin nombre";
+        render();
+      } else {
+        alert("El archivo no tiene el formato esperado.");
+      }
+    }catch(err){ alert("No se pudo leer el archivo."); }
+  };
+  reader.readAsText(file);
+  e.target.value = "";
+});
+
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function escapeAttr(str){ return escapeHtml(str); }
+
+/* init */
+el("projectName").value = state.projectName || "Proyecto sin nombre";
+initSyncUI();
+render();
+
+})();
+</script>
+</body>
+</html>
