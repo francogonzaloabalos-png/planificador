@@ -288,6 +288,52 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 .kpi-val{font-size:22px;font-weight:600;margin:4px 0;}
 .kpi-sub{font-size:11.5px;color:var(--ink-soft);}
 
+/* ================= VERSIÓN CELULAR ================= */
+@media (max-width:768px){
+  .shell{display:block;height:auto;overflow:visible;}
+  .main{display:block;}
+  .sidebar{width:100%;flex-direction:column;}
+  .sidebar .brand{padding:12px 14px 8px;}
+  .sidebar .brand .sub{display:none;}
+  .nav{flex-direction:row;overflow-x:auto;padding:6px 8px;}
+  .nav button{white-space:nowrap;flex:none;}
+  .sidebar-foot{margin-top:0;padding:8px 10px;}
+  .sidebar-foot button{width:auto !important;margin-bottom:0 !important;flex:1 1 40%;}
+  .topbar{height:auto;flex-direction:column;align-items:flex-start;gap:4px;padding:10px 14px;}
+  .topbar .stats{flex-wrap:wrap;gap:10px;}
+  .view{overflow:visible;padding:12px;}
+
+  /* Gantt */
+  .gantt-left{width:120px;}
+  .task-row-label{padding:0 6px 0 12px;}
+  .task-row-label .who{display:none;}
+  .gantt-toolbar .zoom-ctrl{display:none;}
+
+  /* Tablero */
+  .kanban{overflow-x:auto;padding-bottom:10px;}
+
+  /* Listado */
+  table.data{display:block;overflow-x:auto;white-space:nowrap;}
+  .filters select,.filters input{flex:1 1 45%;}
+
+  /* Bitácora */
+  .log-day{flex-direction:column;gap:4px;}
+  .log-day-label{width:auto;padding-top:0;}
+
+  /* Modales */
+  .overlay{padding:0;}
+  .modal{width:100% !important;border-radius:0;min-height:100vh;}
+  .row2{grid-template-columns:1fr;}
+  .mfoot{flex-wrap:wrap;}
+
+  /* Indicadores / Dashboard */
+  .ind-grid{grid-template-columns:1fr;}
+  .ind-form{grid-template-columns:1fr;}
+  .kpi-grid{grid-template-columns:1fr 1fr;}
+
+  /* Evita el zoom automático de iOS al tocar un campo */
+  input,select,textarea{font-size:16px !important;}
+}
 </style>
 </head>
 <body>
