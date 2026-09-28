@@ -268,6 +268,26 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 ::-webkit-scrollbar-thumb{background:#D3D7DE;border-radius:5px;}
 ::-webkit-scrollbar-track{background:transparent;}
 
+/* ================= INDICADORES / DASHBOARD ================= */
+.ind-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;}
+.ind-card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:10px;}
+.ind-card h3{margin:0;font-size:14px;font-weight:600;}
+.ind-form{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.ind-radio{display:flex;gap:14px;font-size:13px;}
+.ind-radio label{display:flex;align-items:center;gap:5px;}
+.ind-result{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.ind-badge{font-size:15px;padding:4px 12px;}
+.ind-extra{font-size:12px;color:var(--ink-soft);}
+.ind-row{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--line-soft);}
+.ind-row .rm{background:none;border:none;color:var(--ink-soft);font-size:16px;}
+.ind-row .rm:hover{color:var(--red);}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;cursor:pointer;box-shadow:var(--shadow);}
+.kpi.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft);}
+.kpi-name{font-size:12px;color:var(--ink-soft);min-height:32px;}
+.kpi-val{font-size:22px;font-weight:600;margin:4px 0;}
+.kpi-sub{font-size:11.5px;color:var(--ink-soft);}
+
 </style>
 </head>
 <body>
@@ -285,6 +305,8 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
       <button data-view="table"><span class="dot"></span>Listado</button>
       <button data-view="team"><span class="dot"></span>Equipo</button>
       <button data-view="log"><span class="dot"></span>Bitácora</button>
+      <button data-view="indicators"><span class="dot"></span>Indicadores</button>
+      <button data-view="dashboard"><span class="dot"></span>Dashboard</button>
     </nav>
     <div class="sync-status" id="syncStatus"><span class="sync-dot" id="syncDot"></span><span id="syncText">Sincronización no configurada</span></div>
     <div class="sidebar-foot" style="flex-wrap:wrap;">
@@ -469,6 +491,7 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script>
 (function(){
 "use strict";
@@ -606,15 +629,15 @@ function connectFirebase(config, room){
       }
       
       // Aplicación automática de cambios (Estilo Google Sheets)
-      suppressNextLocalPush = true;
-      state = val.data; 
+      state = normalize(val.data);
       try{ activeStorage().setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
       document.getElementById("projectName").value = state.projectName || "Proyecto sin nombre";
-      
-      // Si usted NO está editando una tarea activamente, redibuja la pantalla para mostrar los cambios
-      if (!editingTaskId) {
-          render();
-      }
+
+      const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName) && viewEl.contains(document.activeElement);
+      if(editingTaskId){ /* modal abierto: no tocar */ }
+      else if(currentView==="indicators") refreshIndLists();
+      else if(!typing) render();
+      updateTopStats();
       
       setSyncStatus("ok", "Sincronizado (cambios recibidos)");
     }, err=>{
@@ -688,7 +711,7 @@ function initSyncUI(){
   };
 }
 
-let state = load();
+let state = normalize(load());
 let currentView = "gantt";
 let dayWidth = 30;
 let ganttRangePad = 0;
@@ -717,7 +740,7 @@ document.querySelectorAll(".nav button").forEach(btn=>{
     document.querySelectorAll(".nav button").forEach(b=>b.classList.remove("active"));
     btn.classList.add("active");
     currentView = btn.dataset.view;
-    const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal"};
+    const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal", indicators:"Registro de indicadores", dashboard:"Dashboard de indicadores"};
     el("viewTitle").textContent = titles[currentView];
     render();
   });
@@ -743,6 +766,8 @@ function render(){
   else if(currentView==="table") renderTable();
   else if(currentView==="team") renderTeam();
   else if(currentView==="log") renderLog();
+  else if(currentView==="indicators") renderIndicators();
+  else if(currentView==="dashboard") renderDashboard();
 }
 
 /* ================= GANTT ================= */
@@ -1170,7 +1195,7 @@ function renderLog(){
     ta.addEventListener("input", e=>{
       state.weeklyLog[e.target.dataset.date] = e.target.value;
     });
-    ta.addEventListener("blur", ()=> save());
+    ta.addEventListener("input", ()=> save());
   });
 
   viewEl.querySelectorAll(".copy-week").forEach(btn=>{
@@ -1568,7 +1593,7 @@ el("importFile").addEventListener("change", (e)=>{
     try{
       const data = JSON.parse(reader.result);
       if(data.stages && data.tasks && data.members){
-        state = data;
+        state = normalize(data);
         save();
         el("projectName").value = state.projectName || "Proyecto sin nombre";
         render();
@@ -1585,6 +1610,324 @@ function escapeHtml(str){
   return String(str).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
 function escapeAttr(str){ return escapeHtml(str); }
+
+/* ================= INDICADORES ================= */
+function normalize(s){ s.indicators = s.indicators || []; s.tasks = s.tasks || []; s.stages = s.stages || []; s.members = s.members || []; return s; }
+
+const N = v => parseFloat(v) || 0;
+const toMin = t => { if(!t) return null; const [h,m] = t.split(":").map(Number); return h*60+m; };
+const fmt = (v,u) => v==null ? "—" : (u==="%" ? v.toFixed(1)+"%" : v.toFixed(1)+" "+u);
+const catLabel = v => v===true ? "Sí" : v===false ? "No" : (v || "—");
+
+/* kind:"ratio" -> calc devuelve {num,den} (se agrega sumando)
+   kind:"mean"  -> calc devuelve {value}   (se agrega promediando)
+   good: "up" = subir es mejor, "down" = bajar es mejor */
+const IND = {
+  adherencia:{ n:"1. Adherencia de carga (sectores digitalizados)", unit:"%", kind:"ratio", good:"up", cat:["familia","motivo"],
+    fields:[
+      {k:"fecha",l:"Fecha",t:"date"},
+      {k:"familia",l:"Familia de material",t:"text"},
+      {k:"papel",l:"Ítems habilitados despachados (papel)",t:"number"},
+      {k:"app",l:"Ítems registrados en la App",t:"number"},
+      {k:"motivo",l:"Motivo de falla",t:"select",o:["Olvido","Falta de tiempo","Sin internet","Otro"]}],
+    calc:d=>({num:N(d.app),den:N(d.papel)}),
+    extra:d=>`${N(d.papel)-N(d.app)} ítems sin cargar` },
+
+  consultas:{ n:"2. Consultas resueltas digitalmente", unit:"%", kind:"ratio", good:"up",
+    fields:[
+      {k:"fecha",l:"Fecha",t:"date"},
+      {k:"total",l:"Consultas sobre familias habilitadas",t:"number"},
+      {k:"pantalla",l:"Resueltas por pantalla",t:"number"},
+      {k:"fisico",l:"Resueltas físicamente",t:"number"},
+      {k:"dobles",l:"Verificaciones dobles por desconfianza",t:"number"}],
+    calc:d=>({num:N(d.pantalla),den:N(d.total)}),
+    extra:d=>{ const p=N(d.pantalla);
+      return `Falsos negativos: ${p?(N(d.dobles)/p*100).toFixed(0):0}% de las de pantalla` +
+        (N(d.pantalla)+N(d.fisico)!==N(d.total) ? " · ⚠ pantalla + físico ≠ total" : ""); } },
+
+  tconsulta:{ n:"3. Tiempo de consulta de stock (ahorro)", unit:"seg", kind:"mean", good:"up", cat:["nivel"],
+    fields:[
+      {k:"fecha",l:"Fecha",t:"date"},
+      {k:"sku",l:"SKU / Material",t:"text"},
+      {k:"fis",l:"Método físico (seg)",t:"number"},
+      {k:"dig",l:"Método digital (seg)",t:"number"},
+      {k:"nivel",l:"Experiencia del usuario",t:"select",o:["Bajo","Medio","Alto"]}],
+    calc:d=>({value:N(d.fis)-N(d.dig)}),
+    extra:d=>N(d.fis)?`Ahorro: ${((N(d.fis)-N(d.dig))/N(d.fis)*100).toFixed(0)}%`:"" },
+
+  tcarga:{ n:"4. Tiempo de carga por movimiento", unit:"seg/mov", kind:"mean", good:"down", cat:["tipo","red"],
+    fields:[
+      {k:"fecha",l:"Fecha",t:"date"},
+      {k:"tipo",l:"Tipo de carga",t:"radio",o:["Individual","En Lote"]},
+      {k:"items",l:"Ítems en el lote",t:"number"},
+      {k:"seg",l:"Tiempo cronometrado (seg)",t:"number"},
+      {k:"red",l:"Conexión percibida",t:"select",o:["Óptima","Lenta","Inestable"]}],
+    calc:d=>({value:(d.tipo==="En Lote" && N(d.items)>0) ? N(d.seg)/N(d.items) : N(d.seg)}),
+    extra:d=>d.tipo==="En Lote" ? "En lote se calcula seg por ítem" : "" },
+
+  demora:{ n:"5. Demora de carga (brecha de actualización)", unit:"min", kind:"mean", good:"down", cat:["pico"],
+    fields:[
+      {k:"fecha",l:"Fecha",t:"date"},
+      {k:"remito",l:"ID de remito",t:"text"},
+      {k:"hp",l:"Hora en papel",t:"time"},
+      {k:"hs",l:"Hora de registro en sistema",t:"time"},
+      {k:"pico",l:"¿Ocurrió en horario pico de despachos?",t:"checkbox"}],
+    calc:d=>{ const a=toMin(d.hp), b=toMin(d.hs); if(a==null||b==null) return {value:null};
+      let m=b-a; if(m<0) m+=1440; return {value:m}; },
+    extra:d=>{ const c=IND.demora.calc(d).value; return c==null?"":`${(c/60).toFixed(1)} hs de brecha`; } },
+
+  ira:{ n:"6. Exactitud de registro de inventario (IRA)", unit:"%", kind:"mean", good:"up", cat:["desvio","corr"],
+    fields:[
+      {k:"fecha",l:"Fecha",t:"date"},
+      {k:"material",l:"Material auditado",t:"text"},
+      {k:"fis",l:"Cantidad física contada",t:"number"},
+      {k:"sis",l:"Cantidad en sistema",t:"number"},
+      {k:"desvio",l:"Tipo de desvío (auto)",t:"select",o:["Coincide","Faltante físico","Sobrante físico"]},
+      {k:"corr",l:"¿Hubo correcciones previas en la semana?",t:"checkbox"}],
+    auto:{ desvio:d=> N(d.fis)===N(d.sis) ? "Coincide" : (N(d.fis)<N(d.sis) ? "Faltante físico" : "Sobrante físico") },
+    calc:d=>({value: N(d.fis)===N(d.sis) ? 100 : 0}),   // el promedio de 100/0 = % de ítems que coinciden
+    extra:d=>`Diferencia: ${N(d.fis)-N(d.sis)} u.` },
+
+  errores:{ n:"7. Tasa de movimientos duplicados o erróneos", unit:"%", kind:"ratio", good:"down",
+    fields:[
+      {k:"fecha",l:"Desde",t:"date"},
+      {k:"fecha2",l:"Hasta",t:"date"},
+      {k:"total",l:"Total de movimientos",t:"number"},
+      {k:"lag",l:"Anulaciones por lag / doble click",t:"number"},
+      {k:"tipeo",l:"Correcciones por error de tipeo",t:"number"},
+      {k:"equiv",l:"Anulaciones por ítem equivocado",t:"number"}],
+    calc:d=>({num:N(d.lag)+N(d.tipeo)+N(d.equiv),den:N(d.total)}),
+    extra:d=>`IT: ${N(d.lag)} · Capacitación: ${N(d.tipeo)} · Ítem: ${N(d.equiv)}` }
+};
+
+function agg(type, recs){
+  const I = IND[type]; if(!recs.length) return null;
+  const cs = recs.map(r=>I.calc(r.d));
+  if(I.kind==="ratio"){
+    const den = cs.reduce((a,c)=>a+c.den,0);
+    return den ? cs.reduce((a,c)=>a+c.num,0)/den*100 : null;
+  }
+  const v = cs.map(c=>c.value).filter(x=>x!=null);
+  return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null;
+}
+const single = (type,d) => agg(type,[{d}]);
+
+/* ---------- Ejemplos de llenado ---------- */
+const EJ = {
+  adherencia:{ v:{familia:"Cables", papel:50, app:40, motivo:"Olvido"}, t:`
+    Según el remito en papel salieron <b>50 rollos de cable</b> (familia habilitada) y en la app se cargaron <b>40</b>.<br>
+    • Familia: Cables<br>• Ítems despachados en papel: 50<br>• Ítems registrados en la App: 40<br>• Motivo de falla: Olvido<br>
+    <b>Resultado: 80%</b> (40 / 50). Solo cuenta lo despachado de familias ya digitalizadas.` },
+
+  consultas:{ v:{total:10, pantalla:8, fisico:2, dobles:1}, t:`
+    En el día preguntaron 10 veces por cables y térmicas: 8 se respondieron mirando el celular y 2 yendo al estante.
+    Las consultas de "Media Tensión" no se cuentan porque no están digitalizadas.<br>
+    • Consultas sobre familias habilitadas: 10<br>• Resueltas por pantalla: 8<br>• Resueltas físicamente: 2<br>
+    • Verificaciones dobles: 1 (dato supuesto: una de las 8 se verificó igual en el estante)<br>
+    <b>Resultado: 80%</b> (8 / 10).` },
+
+  tconsulta:{ v:{sku:"Llave térmica", fis:180, dig:30, nivel:"Medio"}, t:`
+    Para saber cuántas llaves térmicas hay: caminar al estante y contar tomó 3 min y buscar en la app 30 seg.<br>
+    • SKU: Llave térmica<br>• Método físico: 180 (se carga en <b>segundos</b>, no en minutos)<br>• Método digital: 30<br>
+    • Experiencia del usuario: Medio (dato supuesto)<br>
+    <b>Resultado: ahorro de 150 seg</b> (2,5 min), o sea 83%. Carga una fila por cada material cronometrado.` },
+
+  tcarga:{ v:{tipo:"Individual", seg:45, red:"Óptima"}, t:`
+    Desde que se escanea el QR del estante hasta "Confirmar Movimiento" pasaron 45 segundos.<br>
+    • Tipo de carga: Individual<br>• Ítems en el lote: déjalo vacío<br>• Tiempo cronometrado: 45<br>• Conexión percibida: Óptima (dato supuesto)<br>
+    <b>Resultado: 45 seg/mov.</b><br>
+    Si fuera un lote (ej: 10 ítems en 120 seg), elige "En Lote" y carga 10 y 120: el resultado es 12 seg por ítem, comparable con las cargas individuales.` },
+
+  demora:{ v:{remito:"R-0001", hp:"09:00", hs:"11:30", pico:true}, t:`
+    El remito se firmó a las 09:00 y la salida se cargó en el sistema a las 11:30.<br>
+    • ID de remito: el número del remito (ej. R-0001)<br>• Hora en papel: 09:00<br>• Hora de registro en sistema: 11:30<br>
+    • Horario pico: tilda si corresponde (en el ejemplo, sí)<br>
+    <b>Resultado: 150 min</b> (2,5 hs de brecha). El objetivo es que tienda a cero. Se muestra en minutos.` },
+
+  ira:{ v:{material:"Foco 50W", fis:120, sis:120, corr:false}, t:`
+    Cada registro es <b>un artículo auditado</b>: se cuenta físicamente y se compara con el panel.<br>
+    • Material auditado: Foco 50W<br>• Cantidad física contada: 120<br>• Cantidad en sistema: 120<br>
+    • Tipo de desvío: se completa solo (Coincide)<br>
+    • Correcciones previas: tilda si el operario ya emitió un movimiento de corrección antes de la auditoría (en ese caso carga la cantidad del sistema ya corregida y no se penaliza).<br>
+    Este registro vale 100%. Si no coincidiera (ej. 118 vs 120 = Faltante físico) valdría 0%.
+    Para el ejemplo de 50 artículos con 45 coincidencias, cargas 50 registros y el <b>Dashboard</b> muestra <b>90%</b>. Objetivo: superar el 95%.` },
+
+  errores:{ v:{total:200, lag:3, tipeo:4, equiv:1}, t:`
+    Semana con 200 movimientos en total (datos supuestos):<br>
+    • Desde / Hasta: primer y último día del período<br>• Total de movimientos: 200<br>
+    • Anulaciones por lag / doble click: 3 (problema de IT)<br>• Correcciones por error de tipeo: 4 (capacitación)<br>
+    • Anulaciones por ítem equivocado: 1<br>
+    <b>Resultado: 4%</b> ((3+4+1) / 200). El Dashboard ubica el registro según la fecha "Desde".` }
+};
+function exampleHtml(type){
+  const e = EJ[type]; if(!e) return "";
+  return `<details style="font-size:12.5px;color:var(--ink-soft);">
+    <summary style="cursor:pointer;font-weight:500;color:var(--ink);">Ejemplo de llenado</summary>
+    <div style="margin-top:8px;line-height:1.6;">${e.t}
+      <div style="margin-top:8px;"><button type="button" class="btn ghost small ind-fill">Cargar ejemplo en el formulario</button></div>
+    </div></details>`;
+}
+
+/* ---------- Registro ---------- */
+function fieldHtml(type,f){
+  const id = `i_${type}_${f.k}`;
+  if(f.t==="select") return `<div class="field"><label>${f.l}</label><select data-k="${f.k}">${f.o.map(o=>`<option>${o}</option>`).join("")}</select></div>`;
+  if(f.t==="radio") return `<div style="grid-column:1/-1"><div style="font-size:12px;color:var(--ink-soft);margin-bottom:5px;font-weight:500">${f.l}</div><div class="ind-radio">${f.o.map((o,i)=>`<label><input type="radio" name="${id}" data-k="${f.k}" value="${o}" ${i?"":"checked"}> ${o}</label>`).join("")}</div></div>`;
+  if(f.t==="checkbox") return `<label class="chk-item" style="grid-column:1/-1"><input type="checkbox" data-k="${f.k}"> ${f.l}</label>`;
+  return `<div class="field"><label>${f.l}</label><input data-k="${f.k}" type="${f.t}" ${f.t==="number"?'min="0" step="any" inputmode="decimal"':""} ${f.t==="date"?`value="${todayStr()}"`:""}></div>`;
+}
+function readForm(card){
+  const d = {};
+  card.querySelectorAll("[data-k]").forEach(x=>{
+    if(x.type==="radio"){ if(x.checked) d[x.dataset.k] = x.value; }
+    else if(x.type==="checkbox") d[x.dataset.k] = x.checked;
+    else d[x.dataset.k] = x.value;
+  });
+  return d;
+}
+function drawRecent(card){
+  const type = card.dataset.type, I = IND[type];
+  const rows = state.indicators.filter(r=>r.type===type).sort((a,b)=>b.ts-a.ts).slice(0,5);
+  card.querySelector(".ind-recent").innerHTML = rows.length
+    ? rows.map(r=>`<div class="ind-row"><span class="mono">${r.d.fecha}</span><span>${fmt(single(type,r.d),I.unit)}</span><button class="rm" data-id="${r.id}" title="Eliminar">&times;</button></div>`).join("")
+    : `<div class="ind-row" style="color:var(--grey)">Sin registros todavía</div>`;
+  card.querySelectorAll(".rm").forEach(b=>b.onclick = ()=>{
+    if(confirm("¿Eliminar este registro?")){
+      state.indicators = state.indicators.filter(r=>r.id!==b.dataset.id);
+      save(); drawRecent(card);
+    }
+  });
+}
+function refreshIndLists(){ viewEl.querySelectorAll(".ind-card").forEach(drawRecent); }
+
+function renderIndicators(){
+  viewEl.innerHTML = `<div class="ind-grid">${Object.entries(IND).map(([type,I])=>`
+    <div class="ind-card" data-type="${type}">
+      <h3>${I.n}</h3>
+      ${exampleHtml(type)}
+      <div class="ind-form">${I.fields.map(f=>fieldHtml(type,f)).join("")}</div>
+      <div class="ind-result"><span class="badge completado ind-badge">—</span><span class="ind-extra"></span></div>
+      <button class="btn accent small ind-save">Registrar</button>
+      <div class="ind-recent"></div>
+    </div>`).join("")}</div>`;
+
+  viewEl.querySelectorAll(".ind-card").forEach(card=>{
+    const type = card.dataset.type, I = IND[type];
+    const live = ()=>{
+      const d = readForm(card);
+      if(I.auto) Object.entries(I.auto).forEach(([k,fn])=>{
+        const s = card.querySelector(`[data-k="${k}"]`); if(s){ s.value = fn(d); d[k] = s.value; }
+      });
+      card.querySelector(".ind-badge").textContent = fmt(single(type,d), I.unit);
+      card.querySelector(".ind-extra").textContent = I.extra ? I.extra(d) : "";
+    };
+    card.addEventListener("input", live);
+    card.addEventListener("change", live);
+    const fillBtn = card.querySelector(".ind-fill");
+    if(fillBtn) fillBtn.onclick = ()=>{
+      Object.entries(EJ[type].v).forEach(([k,val])=>{
+        card.querySelectorAll(`[data-k="${k}"]`).forEach(x=>{
+          if(x.type==="radio") x.checked = (x.value===val);
+          else if(x.type==="checkbox") x.checked = !!val;
+          else x.value = val;
+        });
+      });
+      live();
+    };
+
+    card.querySelector(".ind-save").onclick = ()=>{
+      const d = readForm(card);
+      const miss = I.fields.filter(f=>["date","number","time"].includes(f.t) && d[f.k]==="" && !(type==="tcarga" && f.k==="items" && d.tipo!=="En Lote"));
+      if(miss.length){ alert("Falta completar: " + miss.map(f=>f.l).join(", ")); return; }
+      state.indicators.push({id:uid(), type, d, ts:Date.now()});
+      save();
+      card.querySelectorAll('input[type="number"],input[type="time"],input[type="text"]').forEach(x=>{ if(x.dataset.k!=="familia") x.value=""; });
+      card.querySelectorAll('input[type="checkbox"]').forEach(x=>x.checked=false);
+      live(); drawRecent(card);
+    };
+    live(); drawRecent(card);
+  });
+}
+
+/* ---------- Dashboard ---------- */
+const dash = {type:"adherencia", gran:"day", n:14};
+let chartInst = null;
+const bucket = (fecha,gran)=> gran==="week" ? fmtDate(mondayOf(parseDate(fecha))) : fecha;
+const lbl = k => { const d=parseDate(k); return (dash.gran==="week"?"Sem ":"") + d.getDate()+"/"+(d.getMonth()+1); };
+
+function series(type,gran,n){
+  const g = {};
+  state.indicators.filter(r=>r.type===type && r.d.fecha).forEach(r=>{
+    const k = bucket(r.d.fecha,gran); (g[k]=g[k]||[]).push(r);
+  });
+  return Object.keys(g).sort().slice(-n).map(k=>({k, v:agg(type,g[k]), n:g[k].length}));
+}
+function delta(cur,prev,I){
+  const diff = cur-prev, u = I.unit==="%" ? " pp" : " "+I.unit;
+  const cls = Math.abs(diff)<0.05 ? "pendiente" : ((I.good==="up")===(diff>0) ? "completado" : "atrasado");
+  return {txt:(diff>0?"+":"")+diff.toFixed(1)+u, cls};
+}
+
+function renderDashboard(){
+  const I = IND[dash.type];
+
+  const kpis = Object.entries(IND).map(([type,J])=>{
+    const s = series(type,dash.gran,dash.n).filter(x=>x.v!=null);
+    const cur = s[s.length-1], prev = s[s.length-2];
+    const dl = cur && prev ? delta(cur.v,prev.v,J) : null;
+    return `<div class="kpi ${type===dash.type?"sel":""}" data-type="${type}">
+      <div class="kpi-name">${J.n}</div>
+      <div class="kpi-val">${cur?fmt(cur.v,J.unit):"—"}</div>
+      <div class="kpi-sub">${cur?lbl(cur.k):"Sin datos"} ${dl?`<span class="badge ${dl.cls}">${dl.txt}</span>`:""}</div>
+    </div>`;
+  }).join("");
+
+  const s = series(dash.type,dash.gran,dash.n);
+  const rows = s.map((x,i)=>{
+    const p = i>0 ? s[i-1] : null;
+    const dl = (x.v!=null && p && p.v!=null) ? delta(x.v,p.v,I) : null;
+    return `<tr><td class="mono">${lbl(x.k)}</td><td>${fmt(x.v,I.unit)}</td><td>${x.n}</td><td>${dl?`<span class="badge ${dl.cls}">${dl.txt}</span>`:"—"}</td></tr>`;
+  }).reverse().join("");
+
+  const keys = new Set(s.map(x=>x.k));
+  const inRange = state.indicators.filter(r=>r.type===dash.type && r.d.fecha && keys.has(bucket(r.d.fecha,dash.gran)));
+  const cats = (I.cat||[]).map(k=>{
+    const g = {}; inRange.forEach(r=>{ const c=catLabel(r.d[k]); (g[c]=g[c]||[]).push(r); });
+    const f = I.fields.find(x=>x.k===k);
+    return `<div><b style="font-size:12.5px;">${f.l}</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+      ${Object.entries(g).map(([c,rs])=>`<span class="badge pendiente">${escapeHtml(c)}: ${fmt(agg(dash.type,rs),I.unit)} (${rs.length})</span>`).join("") || "—"}</div></div>`;
+  }).join("");
+
+  viewEl.innerHTML = `
+    <div class="filters">
+      <select id="dGran"><option value="day">Día por día</option><option value="week">Semana por semana</option></select>
+      <select id="dN">${[4,7,8,12,14,30].map(n=>`<option value="${n}">Últimos ${n}</option>`).join("")}</select>
+    </div>
+    <div class="kpi-grid">${kpis}</div>
+    <div class="ind-card" style="margin-top:14px;"><h3>${I.n} — evolución (${I.unit})</h3>
+      <div style="height:280px;position:relative;"><canvas id="dChart"></canvas></div></div>
+    <div class="ind-grid" style="margin-top:14px;">
+      <div class="ind-card"><h3>Detalle por período</h3>
+        <table class="data"><thead><tr><th>Período</th><th>Valor</th><th>Reg.</th><th>Δ vs anterior</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="4" style="text-align:center;color:var(--ink-soft);padding:20px;">Sin datos</td></tr>`}</tbody></table></div>
+      <div class="ind-card"><h3>Desglose del período mostrado</h3>${cats || '<span style="color:var(--grey)">Sin desglose para este indicador</span>'}</div>
+    </div>`;
+
+  el("dGran").value = dash.gran; el("dN").value = dash.n;
+  el("dGran").onchange = e=>{ dash.gran = e.target.value; dash.n = dash.gran==="week" ? 8 : 14; renderDashboard(); };
+  el("dN").onchange = e=>{ dash.n = parseInt(e.target.value); renderDashboard(); };
+  viewEl.querySelectorAll(".kpi").forEach(k=>k.onclick = ()=>{ dash.type = k.dataset.type; renderDashboard(); });
+
+  if(chartInst){ chartInst.destroy(); chartInst = null; }
+  if(window.Chart && s.length){
+    chartInst = new Chart(el("dChart"), {
+      type:"bar",
+      data:{ labels:s.map(x=>lbl(x.k)),
+             datasets:[{ data:s.map(x=>x.v==null?null:+x.v.toFixed(2)), backgroundColor:"#5468C4", borderRadius:4 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true}} }
+    });
+  }
+}
 
 /* init */
 el("projectName").value = state.projectName || "Proyecto sin nombre";
