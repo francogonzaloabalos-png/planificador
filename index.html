@@ -2371,6 +2371,125 @@ function drawStockBody(){
     save(); drawStockBody();
   });
 }
+/* ================= REMITOS vs EXCEL (por producto y fecha, sin N° de remito) ================= */
+const XL_STOP = new Set(["de","la","el","los","las","para","con","un","una","y","en","por","del","x"]);
+const xlTok = s => String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase()
+  .split(/[^a-z0-9]+/).filter(t=>t && (t.length>=2 || /\d/.test(t)));
+const xlCore = t => t.replace(/[a-z]+$/,"");
+
+/* % de las palabras que escribiste que aparecen en el movimiento (0 a 1).
+   Los números tienen que coincidir sí o sí (25 no es 32), pero "25" coincide con "25A". */
+function xlScore(nombre, txt){
+  const a = xlTok(nombre).filter(t=>!XL_STOP.has(t)), b = xlTok(txt);
+  if(!a.length) return 0;
+  let ok = 0;
+  for(const t of a){
+    const f = b.some(u=> u===t
+      || (/\d/.test(t) && xlCore(t) && xlCore(t)===xlCore(u))
+      || (t.length>=4 && u.length>=4 && (u.startsWith(t)||t.startsWith(u))));
+    if(f) ok++; else if(/\d/.test(t)) return 0;
+  }
+  return ok/a.length;
+}
+function xlFecha(s){
+  const m = String(s||"").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  return m ? `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}` : "";
+}
+function xlHora(s){
+  const m = String(s||"").match(/(\d{1,2}):(\d{2})/);
+  return m ? m[1].padStart(2,"0")+":"+m[2] : "";
+}
+function xlEntry(m){
+  return {key:m.key, f:m.f, h:m.h, tipo:String(m.tipo||"").toUpperCase(), fam:m.familia||"", marca:m.marca||"",
+    desc:m.descripcion||"", cant:N(m.cantidad), unidad:m.unidad||"", resp:m.responsable||"", obra:m.obra||"",
+    pedido:m.id_pedido||"", envio:m.envio||"", zona:m.zona||""};
+}
+const XL_TIPO = {ENTRADA:"completado", SALIDA:"en_curso"};
+
+async function xlCargar(){
+  const x = stk.xl; x.loading = true; x.err = ""; drawStockBody();
+  try{
+    const j = await altFetch("movimientos", {limit:100000});
+    x.movs = (j.movimientos||[]).map(m=>Object.assign({}, m, {
+      f: xlFecha(m.fecha), h: xlHora(m.fecha), key: [m.id_pedido, m.descripcion, m.cantidad, m.tipo].join("|"),
+      txt: [m.familia, m.marca, m.descripcion].join(" ")
+    }));
+    x.at = new Date();
+  }catch(e){ x.err = "No se pudo leer el Excel: " + (e.message||e); }
+  x.loading = false;
+  if(stk.tab==="xl") drawStockBody();
+}
+
+function drawRemExcel(body){
+  const x = stk.xl = stk.xl || {movs:null, at:null, err:"", loading:false};
+  stk.xlAll = stk.xlAll || {}; stk.antes = stk.antes || 0;
+  stState();
+  const hoy = todayStr();
+  let html = `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+    <button class="btn accent small" id="xlGo">${x.movs?"Actualizar":"Cargar"} movimientos del Excel</button>
+    <label class="st-lbl">Buscar desde <input type="number" id="xlAnt" min="0" max="30" value="${stk.antes}" style="width:55px;"> días antes</label>
+    <label class="st-lbl">hasta <input type="number" id="xlTol" min="0" max="30" value="${stk.tol}" style="width:55px;"> días después de la fecha del remito</label>
+    <span style="font-size:12px;color:var(--ink-soft);">${x.loading?"Leyendo el Excel…":(x.at?`${x.movs.length} movimientos leídos a las ${x.at.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})}`:"Todavía no se leyó el Excel")}</span></div>`;
+  if(x.err) html += `<p style="color:var(--red);font-size:12.5px;">${escapeHtml(x.err)} (la URL se configura en la sección Alertas)</p>`;
+  if(!x.movs) html += `<p style="font-size:12.5px;color:var(--ink-soft);">Cargá los remitos en la pestaña <b>Remitos</b> y tocá el botón: traigo del Excel todo lo del producto (entradas, salidas, obra, fecha y hora) cerca de la fecha del remito. Vos tildás cuáles corresponden y queda guardado acá.</p>`;
+
+  const lineas = state.remitos.filter(r=>inRange(r.fecha)&&hit(r.numero,r.material,r.destino)).sort((a,b)=>a.fecha<b.fecha?1:-1);
+  const usadoPor = {};
+  state.remitos.forEach(r=>(r.vinc||[]).forEach(v=>{ usadoPor[v.key] = r.id; }));
+
+  const filas = lineas.map(r=>{
+    const need = N(r.cant), vinc = r.vinc || [], todos = !!stk.xlAll[r.id];
+    const desde = addDaysStr(r.fecha, -stk.antes), lim = addDaysStr(r.fecha, stk.tol);
+    const keys = new Set(vinc.map(v=>v.key));
+    let lista = [];
+    if(x.movs){
+      lista = x.movs.map(m=>({e:xlEntry(m), sc:xlScore(r.material, m.txt), ven:m.f&&m.f>=desde&&m.f<=lim}))
+        .filter(c=>c.sc>=0.67 && (todos || c.ven || keys.has(c.e.key)));
+    }
+    const enLista = new Set(lista.map(c=>c.e.key));
+    vinc.forEach(v=>{ if(!enLista.has(v.key)) lista.push({e:v, sc:1, gone:!!x.movs}); });   // guardados que ya no se ven en el Excel
+    lista.sort((a,b)=>((a.e.f||"")+(a.e.h||""))<((b.e.f||"")+(b.e.h||""))?-1:1);
+    lista = todos ? lista.slice(-30) : lista.slice(0,15);
+
+    const sal = vinc.filter(v=>v.tipo==="SALIDA");
+    const got = sal.reduce((s,v)=>s+N(v.cant),0), last = sal.map(v=>v.f).sort().pop();
+    const haySal = lista.some(c=>c.e.tipo==="SALIDA");
+    let st, label;
+    if(need && got>=need){ const d = last?daysBetween(parseDate(r.fecha),parseDate(last)):0; st="ok"; label = d>0?`Salida confirmada (+${d} d)`:"Salida confirmada"; }
+    else if(got>0){ st="plazo"; label = `Parcial: ${got} de ${need}`; }
+    else if(!x.movs){ st="plazo"; label = "Falta leer el Excel"; }
+    else if(haySal){ st="plazo"; label = "Revisar y tildar la salida"; }
+    else if(hoy<=lim){ st="plazo"; label = "Pendiente · dentro del plazo"; }
+    else { st="falta"; label = "Sin salida en el Excel"; }
+
+    const items = lista.map(c=>{
+      const e = c.e, otro = usadoPor[e.key] && usadoPor[e.key]!==r.id;
+      return `<label style="display:flex;gap:6px;align-items:flex-start;font-size:12px;margin-bottom:5px;${otro?"opacity:.5;":""}">
+        <input type="checkbox" class="xl-chk" data-r="${r.id}" data-k="${escapeAttr(e.key)}" ${keys.has(e.key)?"checked":""} ${otro?"disabled":""}>
+        <span><b>${e.f||"s/fecha"} ${e.h||""}</b> <span class="badge ${XL_TIPO[e.tipo]||"pendiente"}">${escapeHtml(e.tipo)}</span>
+        ${escapeHtml(e.fam)} · ${escapeHtml(e.desc)}${e.marca&&e.marca!=="No especificado"?" ("+escapeHtml(e.marca)+")":""} · <b>${e.cant} ${escapeHtml(e.unidad)}</b><br>
+        <span style="color:var(--ink-soft);">Obra: ${escapeHtml(e.obra||"—")} · ${escapeHtml(e.resp||"—")} · ${escapeHtml(e.pedido)}${e.envio?" / "+escapeHtml(e.envio):""}${e.zona?" · "+escapeHtml(e.zona):""}
+        ${c.sc<0.99&&!c.gone?` · parecido ${Math.round(c.sc*100)}%`:""}${c.gone?" · ⚠ ya no está en el Excel":""}${otro?" · usado en otra línea":""}</span></span></label>`;
+    }).join("") || (x.movs ? `<span style="color:var(--grey);font-size:12px;">Sin movimientos parecidos entre ${desde} y ${lim}</span>` : "");
+    const verTodo = x.movs ? `<button class="btn ghost small xl-all" data-r="${r.id}" style="margin-top:4px;">${todos?"Volver a la ventana de fechas":"Ver todo el historial del producto"}</button>` : "";
+    return `<tr style="cursor:default;"><td class="mono">${escapeHtml(r.numero)}</td><td class="mono">${r.fecha}</td><td>${escapeHtml(r.material)}${r.destino?`<br><span style="font-size:11.5px;color:var(--ink-soft);">${escapeHtml(r.destino)}</span>`:""}</td><td>${r.cant}</td>
+      <td><span class="badge ${ST_BADGE[st]}">${label}</span></td><td style="white-space:normal;min-width:380px;">${items}${verTodo}</td></tr>`;
+  }).join("");
+
+  body.innerHTML = html + tbl(["Remito","Fecha","Producto del remito","Cant.","Estado","Movimientos del Excel (tildá los que corresponden)"], filas);
+  body.querySelector("#xlGo").onclick = xlCargar;
+  body.querySelector("#xlTol").oninput = e=>{ stk.tol = Math.max(0, parseInt(e.target.value)||0); drawRemExcel(body); };
+  body.querySelector("#xlAnt").oninput = e=>{ stk.antes = Math.max(0, parseInt(e.target.value)||0); drawRemExcel(body); };
+  body.querySelectorAll(".xl-all").forEach(b=>b.onclick = ()=>{ stk.xlAll[b.dataset.r] = !stk.xlAll[b.dataset.r]; drawRemExcel(body); });
+  body.querySelectorAll(".xl-chk").forEach(c=>c.onchange = ()=>{
+    const r = state.remitos.find(z=>z.id===c.dataset.r); if(!r) return;
+    r.vinc = r.vinc || [];
+    const k = c.dataset.k, i = r.vinc.findIndex(v=>v.key===k);
+    if(c.checked && i===-1){ const m = x.movs.find(z=>z.key===k); if(m) r.vinc.push(xlEntry(m)); }   // se guarda una copia completa en el planificador
+    else if(!c.checked && i!==-1) r.vinc.splice(i,1);
+    save(); drawStockBody();
+  });
+}
 /* init */
 el("projectName").value = state.projectName || "Proyecto sin nombre";
 initSyncUI();
