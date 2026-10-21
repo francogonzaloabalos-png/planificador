@@ -288,6 +288,10 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 .kpi-val{font-size:22px;font-weight:600;margin:4px 0;}
 .kpi-sub{font-size:11.5px;color:var(--ink-soft);}
 
+/* ================= STOCK Y ALERTAS ================= */
+.st-tabs{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
+.st-lbl{font-size:12px;color:var(--ink-soft);display:flex;align-items:center;gap:6px;}
+
 /* ================= VERSIÓN CELULAR ================= */
 @media (max-width:768px){
   .shell{display:block;height:auto;overflow:visible;}
@@ -353,6 +357,8 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
       <button data-view="log"><span class="dot"></span>Bitácora</button>
       <button data-view="indicators"><span class="dot"></span>Indicadores</button>
       <button data-view="dashboard"><span class="dot"></span>Dashboard</button>
+      <button data-view="stock"><span class="dot"></span>Stock y remitos</button>
+<button data-view="alertas"><span class="dot"></span>Alertas <span id="altBadge" class="badge atrasado" style="display:none"></span></button>
     </nav>
     <div class="sync-status" id="syncStatus"><span class="sync-dot" id="syncDot"></span><span id="syncText">Sincronización no configurada</span></div>
     <div class="sidebar-foot" style="flex-wrap:wrap;">
@@ -786,7 +792,7 @@ document.querySelectorAll(".nav button").forEach(btn=>{
     document.querySelectorAll(".nav button").forEach(b=>b.classList.remove("active"));
     btn.classList.add("active");
     currentView = btn.dataset.view;
-    const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal", indicators:"Registro de indicadores", dashboard:"Dashboard de indicadores"};
+const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal", indicators:"Registro de indicadores", dashboard:"Dashboard de indicadores", stock:"Stock y remitos", alertas:"Alertas de integridad"};
     el("viewTitle").textContent = titles[currentView];
     render();
   });
@@ -814,6 +820,8 @@ function render(){
   else if(currentView==="log") renderLog();
   else if(currentView==="indicators") renderIndicators();
   else if(currentView==="dashboard") renderDashboard();
+  else if(currentView==="stock") renderStock();
+  else if(currentView==="alertas") renderAlertas();
 }
 
 /* ================= GANTT ================= */
@@ -1658,7 +1666,7 @@ function escapeHtml(str){
 function escapeAttr(str){ return escapeHtml(str); }
 
 /* ================= INDICADORES ================= */
-function normalize(s){ s.indicators = s.indicators || []; s.tasks = s.tasks || []; s.stages = s.stages || []; s.members = s.members || []; return s; }
+function normalize(s){ s.indicators = s.indicators || []; s.tasks = s.tasks || []; s.stages = s.stages || []; s.members = s.members || []; s.remitos = s.remitos || []; s.movs = s.movs || []; s.conteos = s.conteos || []; return s; }
 
 const N = v => parseFloat(v) || 0;
 const toMin = t => { if(!t) return null; const [h,m] = t.split(":").map(Number); return h*60+m; };
@@ -1974,7 +1982,395 @@ function renderDashboard(){
     });
   }
 }
+/* ================= ALERTAS DE INTEGRIDAD (Excel de stock) ================= */
+const ALERT_CFG_KEY = "planificador_alertas_cfg_v1";
+const alt = {data:null, loading:false, err:"", at:null, sev:"", primera:false};
+const altNk = s => String(s||"").trim().toLowerCase().replace(/\s+/g," ");
 
+/* La URL del Apps Script se guarda SOLO en este navegador (no viaja a Firebase),
+   porque con esa URL se puede leer y escribir el stock. */
+function altCfg(){ try{ return JSON.parse(activeStorage().getItem(ALERT_CFG_KEY))||{}; }catch(e){ return {}; } }
+function altSaveCfg(c){ try{ activeStorage().setItem(ALERT_CFG_KEY, JSON.stringify(c)); }catch(e){} }
+function altState(){
+  state.alertas = state.alertas || {};
+  const a = state.alertas;
+  a.visto = a.visto || {pedidos:{}, prods:{}};
+  a.visto.pedidos = a.visto.pedidos || {}; a.visto.prods = a.visto.prods || {};
+  a.ignoradas = a.ignoradas || [];
+  return a;
+}
+
+async function altFetch(action, extra){
+  const c = altCfg();
+  if(!c.url) throw new Error("Falta la URL del Apps Script.");
+  const u = new URL(c.url);
+  u.searchParams.set("action", action);
+  Object.entries(extra||{}).forEach(([k,v])=>u.searchParams.set(k,v));
+  if(c.token) u.searchParams.set("token", c.token);
+  const r = await fetch(u.toString());
+  const j = await r.json();
+  if(!j.ok) throw new Error(j.error || "Respuesta inválida del Apps Script");
+  return j;
+}
+
+/* ---------- Análisis: devuelve la lista de alertas ---------- */
+function altAnalizar(prods, movs){
+  const A = altState(), out = [], tol = 0.011;
+  let changed = false;
+  const add = (key,sev,tit,det,ack)=>out.push({key,sev,tit,det,ack});
+  const hist = " Si fue a propósito, tocá «Aceptar»; si no, se recupera desde Archivo → Historial de versiones en Google Sheets.";
+  const primera = !Object.keys(A.visto.pedidos).length && !Object.keys(A.visto.prods).length;
+  alt.primera = primera;
+
+  /* 1) Pedidos de Movimientos: cuántas filas tiene cada ID */
+  const ped = {}, filasPed = {};
+  movs.forEach(m=>{
+    const id = String(m.id_pedido||"").trim().toUpperCase(); if(!id) return;
+    ped[id] = (ped[id]||0)+1; (filasPed[id]=filasPed[id]||[]).push(m);
+  });
+  Object.keys(A.visto.pedidos).forEach(id=>{
+    const antes = A.visto.pedidos[id], ahora = ped[id]||0;
+    if(ahora===0) add("ped-del:"+id,"alta","Pedido borrado de Movimientos: "+id,
+      `Antes tenía ${antes} fila(s) y ya no aparece.`+hist, {t:"ped",id,n:0});
+    else if(ahora<antes) add("ped-rows:"+id+":"+ahora,"alta","Filas borradas dentro de "+id,
+      `Tenía ${antes} fila(s) y ahora tiene ${ahora}.`+hist, {t:"ped",id,n:ahora});
+  });
+  Object.keys(ped).forEach(id=>{ if(!(id in A.visto.pedidos) || ped[id]>A.visto.pedidos[id]){ A.visto.pedidos[id]=ped[id]; changed=true; } });
+
+  /* 2) Productos de Stock que existían y ya no están */
+  const pid = {}; prods.forEach(p=>{ pid[String(p.id).toUpperCase()] = p; });
+  Object.keys(A.visto.prods).forEach(id=>{
+    if(!pid[id]) add("prod-del:"+id,"alta","Producto borrado de la hoja Stock: "+id,
+      `Era: ${A.visto.prods[id]}. Sus movimientos siguen en Movimientos.`+hist, {t:"prod",id});
+  });
+  prods.forEach(p=>{
+    const id = String(p.id).toUpperCase();
+    if(!(id in A.visto.prods)){ A.visto.prods[id] = (p.zona+" · "+p.descripcion).slice(0,90); changed=true; }
+  });
+
+  /* 3) Huecos en la numeración (ING-, SAL-, DEV-) que no se conocían */
+  const nums = {};
+  Object.keys(ped).concat(Object.keys(A.visto.pedidos)).forEach(id=>{
+    const mt = id.match(/^([A-Z]+)-(\d+)$/); if(!mt) return;
+    (nums[mt[1]] = nums[mt[1]] || new Set()).add(parseInt(mt[2],10));
+  });
+  Object.keys(nums).forEach(pre=>{
+    const max = Math.max(...nums[pre]), falt = [];
+    for(let i=1;i<=max;i++) if(!nums[pre].has(i)) falt.push(pre+"-"+String(i).padStart(3,"0"));
+    if(falt.length) add("gap:"+pre+":"+falt.join(","),"media","Numeración con huecos en "+pre,
+      `Faltan: ${falt.slice(0,15).join(", ")}${falt.length>15?" … (+"+(falt.length-15)+")":""}. Puede ser un borrado anterior a que empezara esta vigilancia.`, null);
+  });
+
+  /* 4) Stock vs suma de Movimientos */
+  const kf = (z,f,m,d)=>[z,f,m,d].map(altNk).join("|");
+  const sum = {};
+  movs.forEach(m=>{
+    const k = kf(m.zona,m.familia,m.marca,m.descripcion);
+    const s = sum[k] = sum[k] || {E:0,S:0,D:0,n:0,z:m.zona,d:m.descripcion};
+    const t = String(m.tipo||"").toUpperCase(), c = Number(m.cantidad)||0;
+    if(t==="ENTRADA") s.E+=c; else if(t==="SALIDA") s.S+=c; else if(t.indexOf("DEVOL")===0) s.D+=c;
+    s.n++;
+  });
+  const claves = new Set();
+  const r2 = x=>Math.round(x*100)/100;
+  prods.forEach(p=>{
+    const k = kf(p.zona,p.familia,p.marca,p.descripcion); claves.add(k);
+    const nom = `${p.id} — ${p.descripcion} (${p.zona})`;
+    const calc = r2(p.entradas - p.salidas + p.devoluciones);
+    if(Math.abs(calc - p.stock_actual) > tol)
+      add("stk-int:"+p.id+":"+p.stock_actual,"alta","Stock actual pisado a mano: "+p.id,
+        `${nom}. La planilla dice ${p.stock_actual} pero Entradas − Salidas + Devoluciones da ${calc}.`, null);
+    const s = sum[k];
+    if(!s){
+      if(p.entradas||p.salidas||p.devoluciones) add("stk-nomov:"+p.id,"media","Stock sin movimientos que lo respalden: "+p.id,
+        `${nom}. Tiene Entradas ${p.entradas}, Salidas ${p.salidas}, Devol. ${p.devoluciones} pero no hay ninguna fila en Movimientos (¿se borraron o es carga inicial?).`, null);
+      return;
+    }
+    const dif = [];
+    if(Math.abs(s.E-p.entradas)>tol) dif.push(`Entradas: stock ${p.entradas} vs movimientos ${r2(s.E)}`);
+    if(Math.abs(s.S-p.salidas)>tol) dif.push(`Salidas: stock ${p.salidas} vs movimientos ${r2(s.S)}`);
+    if(Math.abs(s.D-p.devoluciones)>tol) dif.push(`Devol.: stock ${p.devoluciones} vs movimientos ${r2(s.D)}`);
+    if(dif.length){
+      const real = r2(s.E - s.S + s.D);
+      const pista = real < p.stock_actual
+        ? "Con los movimientos el stock sería menor: puede faltar una SALIDA (¿borrada?) o se editó el Stock a mano."
+        : "Con los movimientos el stock sería mayor: puede faltar una ENTRADA (¿borrada?) o se editó el Stock a mano.";
+      add("stk-diff:"+p.id+":"+dif.join("|"),"alta","Stock no coincide con Movimientos: "+p.id,
+        `${nom}. ${dif.join(" · ")}. Stock según movimientos: ${real}; planilla: ${p.stock_actual}. ${pista}`, null);
+    }
+    if(p.stock_actual < -tol) add("stk-neg:"+p.id+":"+p.stock_actual,"media","Stock negativo: "+p.id, `${nom}: ${p.stock_actual}.`, null);
+  });
+  Object.keys(sum).forEach(k=>{
+    if(!claves.has(k)) add("mov-huerfano:"+k,"alta","Movimientos de un producto que no está en Stock",
+      `«${sum[k].d}» (${sum[k].z}) tiene ${sum[k].n} movimiento(s) pero no existe en la hoja Stock: se borró la fila de Stock o se le cambió el texto a mano.`, null);
+  });
+
+  /* 5) Filas incompletas o raras en Movimientos */
+  const sinResp = [], sinObra = [], cantMala = [];
+  movs.forEach(m=>{
+    const id = m.id_pedido || "?", t = String(m.tipo||"").toUpperCase();
+    if(!String(m.responsable||"").trim() && sinResp.indexOf(id)===-1) sinResp.push(id);
+    if(t==="SALIDA" && !String(m.obra||"").trim() && sinObra.indexOf(id)===-1) sinObra.push(id);
+    if(!(Number(m.cantidad)>0) && cantMala.indexOf(id)===-1) cantMala.push(id);
+  });
+  if(sinResp.length) add("dato-resp:"+sinResp.join(","),"baja","Movimientos sin responsable", sinResp.slice(0,20).join(", "), null);
+  if(sinObra.length) add("dato-obra:"+sinObra.join(","),"baja","Salidas sin obra / destino", sinObra.slice(0,20).join(", "), null);
+  if(cantMala.length) add("dato-cant:"+cantMala.join(","),"media","Movimientos con cantidad vacía, cero o negativa", cantMala.slice(0,20).join(", "), null);
+
+  /* 6) Posibles dobles cargas (mismo producto, cantidad, persona y minuto) */
+  const dup = {};
+  movs.forEach(m=>{
+    const k = [m.tipo,m.zona,m.descripcion,m.cantidad,m.responsable,m.obra,m.fecha].map(altNk).join("|");
+    (dup[k] = dup[k] || []).push(m);
+  });
+  Object.keys(dup).forEach(k=>{
+    const g = dup[k]; if(g.length<2) return;
+    const ids = [...new Set(g.map(x=>x.id_pedido))].join(", ");
+    add("dup:"+k,"baja","Posible doble carga: "+g[0].descripcion,
+      `${g.length} filas iguales (${g[0].tipo} ${g[0].cantidad} ${g[0].unidad||""}, ${g[0].fecha}). Pedidos: ${ids}.`, null);
+  });
+
+  /* 7) Remitos propios del planificador sin descontar a tiempo */
+  if(typeof concilia === "function"){
+    const n = concilia().rows.filter(x=>x.st==="falta").length;
+    if(n) add("rem-falta:"+n,"media","Remitos vencidos sin descontar", `${n} línea(s) de remito pasaron el plazo sin su movimiento. Ver Stock y remitos → Conciliación.`, null);
+  }
+
+  if(changed) save();
+  return out;
+}
+
+function altVisibles(){
+  const ign = new Set(altState().ignoradas);
+  return (alt.data||[]).filter(a=>!ign.has(a.key));
+}
+function altBadgeUpdate(){
+  const b = document.getElementById("altBadge"); if(!b) return;
+  const v = altVisibles(), altas = v.filter(a=>a.sev==="alta").length;
+  b.style.display = v.length ? "inline-flex" : "none";
+  b.textContent = v.length;
+  b.className = "badge " + (altas ? "atrasado" : "en_curso");
+  b.style.marginLeft = "auto";
+}
+
+async function altRevisar(silent){
+  if(alt.loading) return;
+  if(!altCfg().url){ if(!silent){ alt.err = "Falta configurar la URL del Apps Script."; if(currentView==="alertas") renderAlertas(); } return; }
+  alt.loading = true; alt.err = "";
+  if(currentView==="alertas" && !silent) renderAlertas();
+  try{
+    const [pj, mj] = await Promise.all([altFetch("json"), altFetch("movimientos",{limit:100000})]);
+    alt.data = altAnalizar(pj.productos||[], mj.movimientos||[]);
+    alt.at = new Date();
+  }catch(e){ alt.err = "No se pudo revisar: " + (e.message||e); }
+  alt.loading = false;
+  altBadgeUpdate();
+  if(currentView==="alertas") renderAlertas();
+}
+
+function renderAlertas(){
+  const c = altCfg(), A = altState(), v = altVisibles();
+  const cnt = s=>v.filter(a=>a.sev===s).length;
+  const lista = v.filter(a=>!alt.sev || a.sev===alt.sev);
+  const SEV = {alta:["atrasado","Alta"], media:["en_curso","Media"], baja:["pendiente","Baja"]};
+  const orden = {alta:0,media:1,baja:2};
+  lista.sort((a,b)=>orden[a.sev]-orden[b.sev]);
+
+  viewEl.innerHTML = `
+  <div class="ind-card" style="margin-bottom:12px;">
+    <h3>Conexión con el Excel (Apps Script)</h3>
+    <div class="ind-form" style="grid-template-columns:2fr 1fr;">
+      <div class="field"><label>URL de la aplicación web (termina en /exec)</label><input id="alUrl" value="${escapeAttr(c.url||"")}" placeholder="https://script.google.com/macros/s/.../exec"></div>
+      <div class="field"><label>Token (solo si activaste AUTH_OBLIGATORIA)</label><input id="alTok" value="${escapeAttr(c.token||"")}"></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button class="btn accent small" id="alGo">Guardar y revisar ahora</button>
+      <button class="btn ghost small" id="alRef" title="Toma el estado actual como el correcto: se apagan los avisos de borrados anteriores">Aceptar estado actual como referencia</button>
+      ${A.ignoradas.length?`<button class="btn ghost small" id="alReset">Mostrar ${A.ignoradas.length} ignorada(s)</button>`:""}
+      <span style="font-size:12px;color:var(--ink-soft);">${alt.loading?"Revisando…":(alt.at?"Última revisión: "+alt.at.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}):"Todavía no se revisó")}</span>
+    </div>
+    <p style="margin:0;font-size:11.5px;color:var(--ink-soft);">La URL se guarda solo en este navegador. Compara las hojas <b>Movimientos</b> y <b>Stock</b>, y se acuerda de lo que vio antes para detectar borrados.</p>
+    ${alt.err?`<p style="margin:0;color:var(--red);font-size:12.5px;">${escapeHtml(alt.err)}</p>`:""}
+    ${alt.primera&&alt.data?`<p style="margin:0;font-size:12.5px;color:var(--ink-soft);">Primera revisión: se guardó la foto de referencia. Desde ahora te aviso si algo desaparece.</p>`:""}
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+    <button class="btn ${!alt.sev?"accent":"ghost"} small" data-s="">Todas (${v.length})</button>
+    <button class="btn ${alt.sev==="alta"?"accent":"ghost"} small" data-s="alta">Altas (${cnt("alta")})</button>
+    <button class="btn ${alt.sev==="media"?"accent":"ghost"} small" data-s="media">Medias (${cnt("media")})</button>
+    <button class="btn ${alt.sev==="baja"?"accent":"ghost"} small" data-s="baja">Bajas (${cnt("baja")})</button>
+  </div>
+  <table class="data"><thead><tr><th>Nivel</th><th>Alerta</th><th>Detalle</th><th></th></tr></thead><tbody>
+  ${lista.map((a,i)=>`<tr data-i="${i}" style="cursor:default;"><td><span class="badge ${SEV[a.sev][0]}">${SEV[a.sev][1]}</span></td>
+    <td style="font-weight:500;">${escapeHtml(a.tit)}</td><td style="white-space:normal;min-width:260px;">${escapeHtml(a.det)}</td>
+    <td style="white-space:nowrap;"><button class="btn ghost small al-ok">${a.ack?"Aceptar":"Ignorar"}</button></td></tr>`).join("")
+    || `<tr><td colspan="4" style="text-align:center;color:var(--ink-soft);padding:24px;">${alt.data?"Sin alertas: Stock y Movimientos son coherentes.":"Configurá la URL y tocá «Guardar y revisar ahora»."}</td></tr>`}
+  </tbody></table>`;
+
+  el("alGo").onclick = ()=>{ altSaveCfg({url:el("alUrl").value.trim(), token:el("alTok").value.trim()}); altRevisar(false); };
+  el("alRef").onclick = ()=>{
+    if(!alt.data || !confirm("¿Tomar el estado actual como correcto? Se borran de la referencia los pedidos/productos que ya no existen.")) return;
+    const A2 = altState();
+    (alt.data||[]).forEach(a=>{ if(a.ack) altAceptar(a); });
+    alt.data = alt.data.filter(a=>!a.ack); save(); altBadgeUpdate(); renderAlertas();
+  };
+  if(el("alReset")) el("alReset").onclick = ()=>{ altState().ignoradas = []; save(); altBadgeUpdate(); renderAlertas(); };
+  viewEl.querySelectorAll("[data-s]").forEach(b=>b.onclick=()=>{ alt.sev=b.dataset.s; renderAlertas(); });
+  viewEl.querySelectorAll(".al-ok").forEach(b=>b.onclick=()=>{
+    const a = lista[parseInt(b.closest("tr").dataset.i)];
+    if(a.ack){ altAceptar(a); alt.data = alt.data.filter(x=>x!==a); }
+    else altState().ignoradas.push(a.key);
+    save(); altBadgeUpdate(); renderAlertas();
+  });
+}
+function altAceptar(a){
+  const V = altState().visto;
+  if(a.ack.t==="ped"){ if(a.ack.n>0) V.pedidos[a.ack.id]=a.ack.n; else delete V.pedidos[a.ack.id]; }
+  else if(a.ack.t==="prod") delete V.prods[a.ack.id];
+}
+
+/* Revisión automática: al abrir y cada 10 minutos (solo si ya hay URL configurada) */
+setTimeout(()=>altRevisar(true), 4000);
+setInterval(()=>altRevisar(true), 10*60*1000);
+/* ================= STOCK Y REMITOS ================= */
+const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2};
+const mk = s => String(s||"").trim().toLowerCase().replace(/\s+/g," ");
+function stState(){ state.remitos=state.remitos||[]; state.movs=state.movs||[]; state.conteos=state.conteos||[]; }
+function addDaysStr(ds,n){ return fmtDate(new Date(parseDate(ds).getTime()+n*DAY)); }
+const ST_BADGE = {ok:"completado", plazo:"en_curso", falta:"atrasado"};
+
+/* Cruza cada línea de remito con los movimientos de salida.
+   1) por N° de remito (si el movimiento lo tiene cargado)
+   2) por material + fecha entre la del remito y remito + "plazo" días */
+function concilia(){
+  stState();
+  const hoy = todayStr(), tol = stk.tol;
+  const movs = state.movs.filter(m=>m.tipo==="salida").map(m=>({m, rem:N(m.cant)}));
+  const lineas = state.remitos.slice().sort((a,b)=>a.fecha<b.fecha?-1:a.fecha>b.fecha?1:0);
+  const rows = lineas.map(r=>{
+    const need = N(r.cant); let got = 0, last = null;
+    const take = x=>{ const q=Math.min(need-got, x.rem); if(q>0){ x.rem-=q; got+=q; if(!last||x.m.fecha>last) last=x.m.fecha; } };
+    const lim = addDaysStr(r.fecha, tol);
+    movs.filter(x=>mk(x.m.remito)&&mk(x.m.remito)===mk(r.numero)&&mk(x.m.material)===mk(r.material)).forEach(take);
+    if(got<need) movs.filter(x=>!mk(x.m.remito)&&mk(x.m.material)===mk(r.material)&&x.m.fecha>=r.fecha&&x.m.fecha<=lim).forEach(take);
+    const delay = last ? daysBetween(parseDate(r.fecha), parseDate(last)) : null;
+    let st, label;
+    if(got>=need){ st="ok"; label = delay>0 ? `Coincide (descontado +${delay} d)` : "Coincide"; }
+    else if(hoy<=lim){ st="plazo"; label = got>0 ? "Parcial · dentro del plazo" : "Pendiente · dentro del plazo"; }
+    else { st="falta"; label = got>0 ? "Descontado parcial · vencido" : "Sin descontar · vencido"; }
+    return {r, got, diff:got-need, last, st, label};
+  });
+  const orph = movs.filter(x=>x.rem>0).map(x=>({m:x.m, rem:x.rem}));
+  return {rows, orph};
+}
+
+function inRange(f){ return (!stk.from||f>=stk.from)&&(!stk.to||f<=stk.to); }
+function hit(...a){ const q=mk(stk.q); return !q||a.some(x=>mk(x).includes(q)); }
+function tbl(h,rows){
+  return `<table class="data"><thead><tr>${h.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows||`<tr><td colspan="${h.length}" style="text-align:center;color:var(--ink-soft);padding:24px;">Sin resultados</td></tr>`}</tbody></table>`;
+}
+const rmBtn = (c,id)=>`<button class="rm" data-c="${c}" data-id="${id}" title="Eliminar" style="background:none;border:none;color:var(--ink-soft);font-size:16px;cursor:pointer;">&times;</button>`;
+
+const STF = {
+  rem:[["numero","N° de remito","text"],["fecha","Fecha","date"],["destino","Destino / obra","text"],["material","Material","text"],["cant","Cantidad que se lleva","number"]],
+  mov:[["fecha","Fecha del movimiento","date"],["tipo","Tipo","select",["salida","entrada"]],["material","Material","text"],["cant","Cantidad","number"],["remito","N° de remito (opcional)","text"]],
+  cont:[["fecha","Fecha del conteo","date"],["material","Material","text"],["fisico","Cantidad física contada","number"],["sistema","Cantidad en sistema","number"],["nota","Observación","text"]]
+};
+const STC = {rem:"remitos", mov:"movs", cont:"conteos"};
+const STSEL = {
+  conc:[["ok","Coincide"],["plazo","Dentro del plazo"],["falta","Vencido / faltante"]],
+  mov:[["con","Con N° de remito"],["sin","Sin N° de remito"]],
+  cont:[["ok","Coincide"],["dif","Con diferencia"]]
+};
+
+function renderStock(){
+  stState();
+  const tabs = [["conc","Conciliación"],["rem","Remitos"],["mov","Movimientos"],["cont","Conteo físico"]];
+  const sel = STSEL[stk.tab];
+  viewEl.innerHTML = `<datalist id="stMats"></datalist>
+  <div class="st-tabs">${tabs.map(([k,l])=>`<button class="btn ${stk.tab===k?"accent":"ghost"} small" data-tab="${k}">${l}</button>`).join("")}</div>
+  <div id="stForm"></div>
+  <div class="filters" style="align-items:center;">
+    <input id="stQ" placeholder="Buscar material, remito, destino..." style="min-width:220px;" value="${escapeAttr(stk.q)}">
+    <label class="st-lbl">Desde <input type="date" id="stFrom" value="${stk.from}"></label>
+    <label class="st-lbl">Hasta <input type="date" id="stTo" value="${stk.to}"></label>
+    ${sel?`<select id="stSt"><option value="">Todos los estados</option>${sel.map(([v,l])=>`<option value="${v}" ${stk.st===v?"selected":""}>${l}</option>`).join("")}</select>`:""}
+    ${stk.tab==="conc"?`<label class="st-lbl" title="Los descuentos en el sistema pueden hacerse hasta N días después de la fecha del remito">Plazo de descuento (días) <input type="number" id="stTol" min="0" max="30" value="${stk.tol}" style="width:60px;"></label>`:""}
+  </div>
+  <div id="stBody"></div>`;
+
+  viewEl.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{ stk.tab=b.dataset.tab; stk.st=""; renderStock(); });
+  el("stQ").oninput = e=>{ stk.q=e.target.value; drawStockBody(); };
+  el("stFrom").onchange = e=>{ stk.from=e.target.value; drawStockBody(); };
+  el("stTo").onchange = e=>{ stk.to=e.target.value; drawStockBody(); };
+  if(el("stSt")) el("stSt").onchange = e=>{ stk.st=e.target.value; drawStockBody(); };
+  if(el("stTol")) el("stTol").oninput = e=>{ stk.tol=Math.max(0,parseInt(e.target.value)||0); drawStockBody(); };
+
+  const fs = STF[stk.tab];
+  if(fs){
+    el("stForm").innerHTML = `<div class="ind-card" style="margin-bottom:12px;">
+      <div class="ind-form" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));">${fs.map(([k,l,t,o])=>
+        t==="select" ? `<div class="field"><label>${l}</label><select data-f="${k}">${o.map(x=>`<option>${x}</option>`).join("")}</select></div>`
+        : `<div class="field"><label>${l}</label><input data-f="${k}" type="${t}" ${t==="number"?'min="0" step="any" inputmode="decimal"':""} ${t==="date"?`value="${todayStr()}"`:""} ${k==="material"?'list="stMats"':""}></div>`).join("")}
+      </div><button class="btn accent small" id="stAdd" style="align-self:flex-start;">+ Agregar</button></div>`;
+    el("stAdd").onclick = ()=>{
+      const d = {}; el("stForm").querySelectorAll("[data-f]").forEach(x=>d[x.dataset.f]=x.value.trim());
+      const need = {rem:["numero","fecha","material","cant"], mov:["fecha","material","cant"], cont:["fecha","material","fisico","sistema"]}[stk.tab];
+      if(need.some(k=>d[k]==="")){ alert("Falta completar: " + need.filter(k=>d[k]==="").join(", ")); return; }
+      ["cant","fisico","sistema"].forEach(k=>{ if(k in d) d[k]=N(d[k]); });
+      state[STC[stk.tab]].push(Object.assign({id:uid()}, d));
+      save();
+      const keep = {rem:["numero","fecha","destino"], mov:["fecha","tipo"], cont:["fecha"]}[stk.tab];
+      el("stForm").querySelectorAll("[data-f]").forEach(x=>{ if(!keep.includes(x.dataset.f)) x.value=""; });
+      const m = el("stForm").querySelector('[data-f="material"]'); if(m) m.focus();
+      drawStockBody();
+    };
+  }
+  drawStockBody();
+}
+
+function drawStockBody(){
+  stState();
+  const mats = [...new Set([...state.remitos,...state.movs,...state.conteos].map(x=>(x.material||"").trim()).filter(Boolean))].sort();
+  el("stMats").innerHTML = mats.map(m=>`<option value="${escapeAttr(m)}">`).join("");
+  const body = el("stBody"); let html = "";
+
+  if(stk.tab==="conc"){
+    const {rows, orph} = concilia();
+    const f = rows.filter(x=>inRange(x.r.fecha)&&hit(x.r.numero,x.r.material,x.r.destino)&&(!stk.st||x.st===stk.st));
+    const c = k=>rows.filter(x=>x.st===k).length;
+    html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      <span class="badge completado">${c("ok")} coinciden</span>
+      <span class="badge en_curso">${c("plazo")} dentro del plazo (${stk.tol} d)</span>
+      <span class="badge atrasado">${c("falta")} vencidos / faltantes</span>
+      <span class="badge pendiente">${orph.length} movimientos sin remito</span></div>`;
+    html += tbl(["Remito","Fecha","Destino","Material","Remito","Descontado","Dif.","Fecha descuento","Estado"],
+      f.map(x=>`<tr><td class="mono">${escapeHtml(x.r.numero)}</td><td class="mono">${x.r.fecha}</td><td>${escapeHtml(x.r.destino||"—")}</td><td>${escapeHtml(x.r.material)}</td><td>${x.r.cant}</td><td>${x.got}</td><td style="color:${x.diff<0?"var(--red)":"inherit"}">${x.diff}</td><td class="mono">${x.last||"—"}</td><td><span class="badge ${ST_BADGE[x.st]}">${x.label}</span></td></tr>`).join(""));
+    if(!stk.st){
+      const o = orph.filter(x=>inRange(x.m.fecha)&&hit(x.m.material,x.m.remito,x.m.nota));
+      html += `<h3 style="margin:20px 0 8px;font-size:14px;">Salidas en el sistema sin remito que las respalde</h3>` +
+        tbl(["Fecha","Material","Cantidad sin respaldo","N° remito cargado"],
+          o.map(x=>`<tr><td class="mono">${x.m.fecha}</td><td>${escapeHtml(x.m.material)}</td><td>${x.rem}</td><td>${escapeHtml(x.m.remito||"—")}</td></tr>`).join(""));
+    }
+  }
+  else if(stk.tab==="rem"){
+    const f = state.remitos.filter(r=>inRange(r.fecha)&&hit(r.numero,r.material,r.destino)).sort((a,b)=>a.fecha<b.fecha?1:-1);
+    html = tbl(["Remito","Fecha","Destino","Material","Cantidad",""], f.map(r=>`<tr><td class="mono">${escapeHtml(r.numero)}</td><td class="mono">${r.fecha}</td><td>${escapeHtml(r.destino||"—")}</td><td>${escapeHtml(r.material)}</td><td>${r.cant}</td><td>${rmBtn("remitos",r.id)}</td></tr>`).join(""));
+  }
+  else if(stk.tab==="mov"){
+    const f = state.movs.filter(m=>inRange(m.fecha)&&hit(m.material,m.remito)&&(!stk.st||(stk.st==="con")===!!mk(m.remito))).sort((a,b)=>a.fecha<b.fecha?1:-1);
+    html = tbl(["Fecha","Tipo","Material","Cantidad","N° remito",""], f.map(m=>`<tr><td class="mono">${m.fecha}</td><td>${m.tipo}</td><td>${escapeHtml(m.material)}</td><td>${m.cant}</td><td>${escapeHtml(m.remito||"—")}</td><td>${rmBtn("movs",m.id)}</td></tr>`).join(""));
+  }
+  else {
+    const f = state.conteos.filter(c=>inRange(c.fecha)&&hit(c.material,c.nota)&&(!stk.st||(stk.st==="ok")===(c.fisico===c.sistema))).sort((a,b)=>a.fecha<b.fecha?1:-1);
+    html = tbl(["Fecha","Material","Físico","Sistema","Diferencia","Estado","Observación",""], f.map(c=>{ const d=c.fisico-c.sistema; return `<tr><td class="mono">${c.fecha}</td><td>${escapeHtml(c.material)}</td><td>${c.fisico}</td><td>${c.sistema}</td><td style="color:${d?"var(--red)":"inherit"}">${d>0?"+":""}${d}</td><td><span class="badge ${d?"atrasado":"completado"}">${d?(d<0?"Faltante físico":"Sobrante físico"):"Coincide"}</span></td><td>${escapeHtml(c.nota||"")}</td><td>${rmBtn("conteos",c.id)}</td></tr>`; }).join(""));
+  }
+  body.innerHTML = html;
+  body.querySelectorAll(".rm").forEach(b=>b.onclick=()=>{
+    if(!confirm("¿Eliminar este registro?")) return;
+    state[b.dataset.c] = state[b.dataset.c].filter(x=>x.id!==b.dataset.id);
+    save(); drawStockBody();
+  });
+}
 /* init */
 el("projectName").value = state.projectName || "Proyecto sin nombre";
 initSyncUI();
