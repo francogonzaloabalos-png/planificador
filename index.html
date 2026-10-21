@@ -2284,7 +2284,7 @@ const STSEL = {
 
 function renderStock(){
   stState();
-  const tabs = [["conc","Conciliación"],["rem","Remitos"],["mov","Movimientos"],["cont","Conteo físico"]];
+const tabs = [["conc","Conciliación"],["rem","Remitos"],["mov","Movimientos"],["cont","Conteo físico"],["xl","Remitos vs Excel"]];
   const sel = STSEL[stk.tab];
   viewEl.innerHTML = `<datalist id="stMats"></datalist>
   <div class="st-tabs">${tabs.map(([k,l])=>`<button class="btn ${stk.tab===k?"accent":"ghost"} small" data-tab="${k}">${l}</button>`).join("")}</div>
@@ -2333,6 +2333,7 @@ function drawStockBody(){
   const mats = [...new Set([...state.remitos,...state.movs,...state.conteos].map(x=>(x.material||"").trim()).filter(Boolean))].sort();
   el("stMats").innerHTML = mats.map(m=>`<option value="${escapeAttr(m)}">`).join("");
   const body = el("stBody"); let html = "";
+  if(stk.tab==="xl"){ drawRemExcel(body); return; }
 
   if(stk.tab==="conc"){
     const {rows, orph} = concilia();
