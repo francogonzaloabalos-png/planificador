@@ -2373,23 +2373,43 @@ function drawStockBody(){
 }
 /* ================= REMITOS vs EXCEL (por producto y fecha, sin N° de remito) ================= */
 const XL_STOP = new Set(["de","la","el","los","las","para","con","un","una","y","en","por","del","x"]);
+const xlFold = t => /\d/.test(t) ? t : t.replace(/h/g,"").replace(/v/g,"b").replace(/z/g,"s").replace(/k/g,"c").replace(/qu/g,"c").replace(/(.)\1+/g,"$1");
 const xlTok = s => String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase()
-  .split(/[^a-z0-9]+/).filter(t=>t && (t.length>=2 || /\d/.test(t)));
+  .split(/[^a-z0-9]+/).filter(t=>t && (t.length>=2 || /\d/.test(t))).map(xlFold);
 const xlCore = t => t.replace(/[a-z]+$/,"");
 
-/* % de las palabras que escribiste que aparecen en el movimiento (0 a 1).
-   Los números tienen que coincidir sí o sí (25 no es 32), pero "25" coincide con "25A". */
-function xlScore(nombre, txt){
-  const a = xlTok(nombre).filter(t=>!XL_STOP.has(t)), b = xlTok(txt);
-  if(!a.length) return 0;
-  let ok = 0;
-  for(const t of a){
-    const f = b.some(u=> u===t
-      || (/\d/.test(t) && xlCore(t) && xlCore(t)===xlCore(u))
-      || (t.length>=4 && u.length>=4 && (u.startsWith(t)||t.startsWith(u))));
-    if(f) ok++; else if(/\d/.test(t)) return 0;
+function xlLev(a,b){
+  const m=a.length, n=b.length; if(Math.abs(m-n)>2) return 9;
+  const d=[]; for(let i=0;i<=m;i++){ d[i]=[i]; } for(let j=1;j<=n;j++) d[0][j]=j;
+  for(let i=1;i<=m;i++) for(let j=1;j<=n;j++){
+    d[i][j]=Math.min(d[i-1][j]+1, d[i][j-1]+1, d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));
+    if(i>1&&j>1&&a[i-1]===b[j-2]&&a[i-2]===b[j-1]) d[i][j]=Math.min(d[i][j], d[i-2][j-2]+1);
   }
-  return ok/a.length;
+  return d[m][n];
+}
+/* Parecido de una palabra tuya con las palabras del movimiento:
+   1 = igual, 0.95 = empieza igual (termica/termicas), 0.85 = con 1 o 2 letras mal escritas.
+   Los números no se perdonan: 25 no es 32, pero "25" sí coincide con "25A". */
+function xlTokSim(t, b){
+  let best = 0;
+  for(const u of b){
+    let s = 0;
+    if(u===t) s = 1;
+    else if(/\d/.test(t)){ if(xlCore(t) && xlCore(t)===xlCore(u)) s = 1; }
+    else if(!/\d/.test(u)){
+      if(t.length>=4 && u.length>=4 && (u.startsWith(t)||t.startsWith(u))) s = 0.95;
+      else if(t.length>=4 ? xlLev(t,u) <= (t.length>=7 ? 2 : 1) : (t.length===3 && t[0]===u[0] && xlLev(t,u)<=1)) s = 0.85;
+    }
+    if(s>best) best = s; if(best===1) break;
+  }
+  return best;
+}
+function xlScore(nombre, txt, tk){
+  const a = xlTok(nombre).filter(t=>!XL_STOP.has(t)), b = tk || xlTok(txt);
+  if(!a.length) return 0;
+  let sum = 0;
+  for(const t of a){ const v = xlTokSim(t, b); if(!v && /\d/.test(t)) return 0; sum += v; }
+  return sum/a.length;
 }
 function xlFecha(s){
   const m = String(s||"").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
@@ -2409,11 +2429,12 @@ const XL_TIPO = {ENTRADA:"completado", SALIDA:"en_curso"};
 async function xlCargar(){
   const x = stk.xl; x.loading = true; x.err = ""; drawStockBody();
   try{
-    const j = await altFetch("movimientos", {limit:100000});
-    x.movs = (j.movimientos||[]).map(m=>Object.assign({}, m, {
-      f: xlFecha(m.fecha), h: xlHora(m.fecha), key: [m.id_pedido, m.descripcion, m.cantidad, m.tipo].join("|"),
-      txt: [m.familia, m.marca, m.descripcion].join(" ")
-    }));
+    const [mj, pj] = await Promise.all([altFetch("movimientos", {limit:100000}), altFetch("json")]);
+    x.movs = (mj.movimientos||[]).map(m=>{
+      const txt = [m.familia, m.marca, m.descripcion].join(" ");
+      return Object.assign({}, m, {f: xlFecha(m.fecha), h: xlHora(m.fecha), key: [m.id_pedido, m.descripcion, m.cantidad, m.tipo].join("|"), txt, tk: xlTok(txt)});
+    });
+    x.prods = (pj.productos||[]).map(p=>Object.assign({}, p, {tk: xlTok([p.familia, p.marca, p.descripcion].join(" "))}));
     x.at = new Date();
   }catch(e){ x.err = "No se pudo leer el Excel: " + (e.message||e); }
   x.loading = false;
@@ -2423,6 +2444,7 @@ async function xlCargar(){
 function drawRemExcel(body){
   const x = stk.xl = stk.xl || {movs:null, at:null, err:"", loading:false};
   stk.xlAll = stk.xlAll || {}; stk.antes = stk.antes || 0;
+  if(!x.movs && !x.loading && !x.auto && altCfg().url){ x.auto = true; xlCargar(); }
   stState();
   const hoy = todayStr();
   let html = `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
@@ -2433,6 +2455,10 @@ function drawRemExcel(body){
   if(x.err) html += `<p style="color:var(--red);font-size:12.5px;">${escapeHtml(x.err)} (la URL se configura en la sección Alertas)</p>`;
   if(!x.movs) html += `<p style="font-size:12.5px;color:var(--ink-soft);">Cargá los remitos en la pestaña <b>Remitos</b> y tocá el botón: traigo del Excel todo lo del producto (entradas, salidas, obra, fecha y hora) cerca de la fecha del remito. Vos tildás cuáles corresponden y queda guardado acá.</p>`;
 
+  html += `<div class="ind-card" style="margin-bottom:12px;"><h3>Buscar un producto en el Excel</h3>
+    <div class="field"><input id="xlProd" placeholder="Ej: termicas, cable unipolar, disyuntor..." value="${escapeAttr(stk.xlProd||"")}"></div>
+    <span style="font-size:12px;color:var(--ink-soft);">Muestra entradas y salidas con fecha, hora y obra. Usa las fechas Desde / Hasta de arriba si las completás.</span>
+    <div id="xlRes"></div></div>`;
   const lineas = state.remitos.filter(r=>inRange(r.fecha)&&hit(r.numero,r.material,r.destino)).sort((a,b)=>a.fecha<b.fecha?1:-1);
   const usadoPor = {};
   state.remitos.forEach(r=>(r.vinc||[]).forEach(v=>{ usadoPor[v.key] = r.id; }));
@@ -2443,8 +2469,14 @@ function drawRemExcel(body){
     const keys = new Set(vinc.map(v=>v.key));
     let lista = [];
     if(x.movs){
-      lista = x.movs.map(m=>({e:xlEntry(m), sc:xlScore(r.material, m.txt), ven:m.f&&m.f>=desde&&m.f<=lim}))
+      lista = x.movs.map(m=>({e:xlEntry(m), sc:xlScore(r.material, m.txt, m.tk), ven:m.f&&m.f>=desde&&m.f<=lim}))
         .filter(c=>c.sc>=0.67 && (todos || c.ven || keys.has(c.e.key)));
+    }
+    let fuera = false;
+    if(x.movs && !lista.length){
+      const dist = m=>m.f ? Math.abs(daysBetween(parseDate(r.fecha), parseDate(m.f))) : 9999;
+      lista = x.movs.filter(m=>xlScore(r.material, m.txt, m.tk)>=0.67).sort((a,b)=>dist(a)-dist(b)).slice(0,6).map(m=>({e:xlEntry(m), sc:xlScore(r.material, m.txt, m.tk)}));
+      fuera = lista.length>0;
     }
     const enLista = new Set(lista.map(c=>c.e.key));
     vinc.forEach(v=>{ if(!enLista.has(v.key)) lista.push({e:v, sc:1, gone:!!x.movs}); });   // guardados que ya no se ven en el Excel
@@ -2453,7 +2485,7 @@ function drawRemExcel(body){
 
     const sal = vinc.filter(v=>v.tipo==="SALIDA");
     const got = sal.reduce((s,v)=>s+N(v.cant),0), last = sal.map(v=>v.f).sort().pop();
-    const haySal = lista.some(c=>c.e.tipo==="SALIDA");
+    const haySal = !fuera && lista.some(c=>c.e.tipo==="SALIDA");
     let st, label;
     if(need && got>=need){ const d = last?daysBetween(parseDate(r.fecha),parseDate(last)):0; st="ok"; label = d>0?`Salida confirmada (+${d} d)`:"Salida confirmada"; }
     else if(got>0){ st="plazo"; label = `Parcial: ${got} de ${need}`; }
@@ -2473,11 +2505,13 @@ function drawRemExcel(body){
     }).join("") || (x.movs ? `<span style="color:var(--grey);font-size:12px;">Sin movimientos parecidos entre ${desde} y ${lim}</span>` : "");
     const verTodo = x.movs ? `<button class="btn ghost small xl-all" data-r="${r.id}" style="margin-top:4px;">${todos?"Volver a la ventana de fechas":"Ver todo el historial del producto"}</button>` : "";
     return `<tr style="cursor:default;"><td class="mono">${escapeHtml(r.numero)}</td><td class="mono">${r.fecha}</td><td>${escapeHtml(r.material)}${r.destino?`<br><span style="font-size:11.5px;color:var(--ink-soft);">${escapeHtml(r.destino)}</span>`:""}</td><td>${r.cant}</td>
-      <td><span class="badge ${ST_BADGE[st]}">${label}</span></td><td style="white-space:normal;min-width:380px;">${items}${verTodo}</td></tr>`;
+      <td><span class="badge ${ST_BADGE[st]}">${label}</span></td><td style="white-space:normal;min-width:380px;">${fuera?`<div style="font-size:12px;color:var(--amber);margin-bottom:5px;">Nada entre ${desde} y ${lim}. Lo más cercano de este producto:</div>`:""}${items}${verTodo}</td></tr>`;
   }).join("");
 
   body.innerHTML = html + tbl(["Remito","Fecha","Producto del remito","Cant.","Estado","Movimientos del Excel (tildá los que corresponden)"], filas);
   body.querySelector("#xlGo").onclick = xlCargar;
+  body.querySelector("#xlProd").oninput = e=>{ stk.xlProd = e.target.value; clearTimeout(stk.xlT); stk.xlT = setTimeout(xlDrawBusq, 180); };
+  xlDrawBusq();
   body.querySelector("#xlTol").oninput = e=>{ stk.tol = Math.max(0, parseInt(e.target.value)||0); drawRemExcel(body); };
   body.querySelector("#xlAnt").oninput = e=>{ stk.antes = Math.max(0, parseInt(e.target.value)||0); drawRemExcel(body); };
   body.querySelectorAll(".xl-all").forEach(b=>b.onclick = ()=>{ stk.xlAll[b.dataset.r] = !stk.xlAll[b.dataset.r]; drawRemExcel(body); });
@@ -2489,6 +2523,34 @@ function drawRemExcel(body){
     else if(!c.checked && i!==-1) r.vinc.splice(i,1);
     save(); drawStockBody();
   });
+}
+
+function xlDrawBusq(){
+  const box = document.getElementById("xlRes"); if(!box) return;
+  const x = stk.xl, q = (stk.xlProd||"").trim();
+  if(!q){ box.innerHTML = ""; return; }
+  if(!x.movs){ box.innerHTML = `<p style="font-size:12.5px;color:var(--ink-soft);">${x.loading?"Leyendo el Excel…":"Primero cargá los movimientos del Excel (botón de arriba)."}</p>`; return; }
+  const TH = 0.67, qt = xlTok(q).filter(t=>!XL_STOP.has(t));
+  const pct = v => v<0.99 ? `<span class="badge pendiente">${Math.round(v*100)}%</span>` : "";
+  const ps = (x.prods||[]).map(p=>({p, sc:xlScore(q,"",p.tk)})).filter(c=>c.sc>=TH).sort((a,b)=>b.sc-a.sc).slice(0,30);
+  const ms = x.movs.map(m=>({m, sc:xlScore(q,"",m.tk)}))
+    .filter(c=>c.sc>=TH && (!stk.from||(c.m.f&&c.m.f>=stk.from)) && (!stk.to||(c.m.f&&c.m.f<=stk.to)))
+    .sort((a,b)=>(Math.round(b.sc*10)-Math.round(a.sc*10)) || (((b.m.f||"")+(b.m.h||""))<((a.m.f||"")+(a.m.h||""))?-1:1));
+  const filasP = ps.map(({p,sc})=>{
+    const ub = [p.ubicacion_deposito, p.ubicacion_estante, p.ubicacion_columna, p.ubicacion_fila].filter(Boolean).join(" · ");
+    return `<tr style="cursor:default;"><td class="mono">${escapeHtml(p.id)}</td><td>${escapeHtml(p.zona)}</td>
+      <td>${escapeHtml(p.familia)} · ${escapeHtml(p.marca)} · ${escapeHtml(p.descripcion)} ${pct(sc)}</td>
+      <td><b>${p.stock_actual}</b> ${escapeHtml(p.unidad||"")}</td><td>${p.stock_minimo}</td>
+      <td><span class="badge ${p.estado==="REPONER"?"atrasado":"completado"}">${escapeHtml(p.estado)}</span></td><td>${escapeHtml(ub||"—")}</td></tr>`;
+  }).join("");
+  const filasM = ms.slice(0,100).map(({m,sc})=>`<tr style="cursor:default;"><td class="mono">${m.f||"s/fecha"}</td><td class="mono">${m.h||""}</td>
+    <td><span class="badge ${XL_TIPO[String(m.tipo).toUpperCase()]||"pendiente"}">${escapeHtml(m.tipo)}</span></td>
+    <td>${escapeHtml(m.familia)} · ${escapeHtml(m.marca)} · ${escapeHtml(m.descripcion)} ${pct(sc)}</td><td>${m.cantidad} ${escapeHtml(m.unidad||"")}</td>
+    <td>${escapeHtml(m.obra||"—")}</td><td>${escapeHtml(m.responsable||"—")}</td><td>${escapeHtml(m.id_pedido||"")}${m.envio?" / "+escapeHtml(m.envio):""}</td></tr>`).join("");
+  box.innerHTML = `<p style="font-size:12.5px;margin:8px 0;">Busqué «${escapeHtml(qt.join(" ")||q)}» (perdona errores de tipeo; el % indica qué tan parecido es). ${ps.length} producto(s) en Stock y ${ms.length} movimiento(s).
+    ${(ps.length||ms.length)?"":"No encontré nada parecido: probá con menos palabras (ej: <b>termica</b>) o revisá las fechas Desde / Hasta."}</p>` +
+    (ps.length ? `<h3 style="margin:10px 0 6px;font-size:13.5px;">Stock actual</h3>` + tbl(["ID","Zona","Producto","Stock","Mínimo","Estado","Ubicación"], filasP) : "") +
+    (ms.length ? `<h3 style="margin:14px 0 6px;font-size:13.5px;">Movimientos</h3>` + tbl(["Fecha","Hora","Tipo","Producto","Cantidad","Obra","Responsable","Pedido / Envío"], filasM) : "");
 }
 /* init */
 el("projectName").value = state.projectName || "Proyecto sin nombre";
