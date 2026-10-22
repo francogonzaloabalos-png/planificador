@@ -653,16 +653,20 @@ function scheduleSync(){
 function pushToFirebase(){
   if(!fbRoomRef) return;
   
-  // 1. Limpieza de emergencia: si el historial guardó símbolos prohibidos, los repara.
+  // 1. Limpieza de emergencia: elimina símbolos prohibidos y claves vacías ("")
   if (state.alertas && state.alertas.visto) {
      let curado = false;
      const fix = obj => {
        if(!obj) return {};
        const out = {};
        Object.keys(obj).forEach(k => {
-         const seguro = String(k).replace(/[.#$\/\[\]]/g, "_");
-         if (seguro !== k) curado = true;
-         out[seguro] = obj[k];
+         const seguro = String(k).trim().replace(/[.#$\/\[\]]/g, "_");
+         if (seguro !== "") { // Si la clave no está vacía, la guardamos
+             if (seguro !== k) curado = true;
+             out[seguro] = obj[k];
+         } else {
+             curado = true; // Se detectó y eliminó una fila sin ID
+         }
        });
        return out;
      };
