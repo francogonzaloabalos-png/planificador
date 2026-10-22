@@ -689,6 +689,8 @@ function connectFirebase(config, room){
       const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName) && viewEl.contains(document.activeElement);
       if(editingTaskId){ /* modal abierto: no tocar */ }
       else if(currentView==="indicators") refreshIndLists();
+      else if(currentView==="stock" && stk.tab==="xl") drawRemExcel(el("stBody"));
+      else if(currentView==="alertas") renderAlertas();
       else if(!typing) render();
       updateTopStats();
       
