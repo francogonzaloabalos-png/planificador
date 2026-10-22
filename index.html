@@ -652,9 +652,35 @@ function scheduleSync(){
 
 function pushToFirebase(){
   if(!fbRoomRef) return;
-  fbRoomRef.set({data: state, updatedBy: clientId, updatedAt: Date.now()})
-    .then(()=> setSyncStatus("ok", "Sincronizado " + nowTime()))
-    .catch(()=> setSyncStatus("err", "Error al sincronizar (revisá la configuración)"));
+  
+  // 1. Limpieza de emergencia: si el historial guardó símbolos prohibidos, los repara.
+  if (state.alertas && state.alertas.visto) {
+     let curado = false;
+     const fix = obj => {
+       if(!obj) return {};
+       const out = {};
+       Object.keys(obj).forEach(k => {
+         const seguro = String(k).replace(/[.#$\/\[\]]/g, "_");
+         if (seguro !== k) curado = true;
+         out[seguro] = obj[k];
+       });
+       return out;
+     };
+     state.alertas.visto.pedidos = fix(state.alertas.visto.pedidos);
+     state.alertas.visto.prods = fix(state.alertas.visto.prods);
+     if (curado) {
+         try{ activeStorage().setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+     }
+  }
+
+  // 2. Envío seguro con captura de errores
+  try {
+    fbRoomRef.set({data: state, updatedBy: clientId, updatedAt: Date.now()})
+      .then(()=> setSyncStatus("ok", "Sincronizado " + nowTime()))
+      .catch(err=> setSyncStatus("err", "Error en la nube (revisá tu conexión)"));
+  } catch(err) {
+    setSyncStatus("err", "Error interno de datos: " + err.message);
+  }
 }
 
 function connectFirebase(config, room){
@@ -2025,10 +2051,13 @@ function altAnalizar(prods, movs){
   const primera = !Object.keys(A.visto.pedidos).length && !Object.keys(A.visto.prods).length;
   alt.primera = primera;
 
+  // Función para limpiar símbolos prohibidos por Firebase
+  const safeId = s => String(s||"").trim().toUpperCase().replace(/[.#$\/\[\]]/g, "_");
+
   /* 1) Pedidos de Movimientos: cuántas filas tiene cada ID */
   const ped = {}, filasPed = {};
   movs.forEach(m=>{
-    const id = String(m.id_pedido||"").trim().toUpperCase(); if(!id) return;
+    const id = safeId(m.id_pedido); if(!id) return;
     ped[id] = (ped[id]||0)+1; (filasPed[id]=filasPed[id]||[]).push(m);
   });
   Object.keys(A.visto.pedidos).forEach(id=>{
@@ -2041,20 +2070,20 @@ function altAnalizar(prods, movs){
   Object.keys(ped).forEach(id=>{ if(!(id in A.visto.pedidos) || ped[id]>A.visto.pedidos[id]){ A.visto.pedidos[id]=ped[id]; changed=true; } });
 
   /* 2) Productos de Stock que existían y ya no están */
-  const pid = {}; prods.forEach(p=>{ pid[String(p.id).toUpperCase()] = p; });
+  const pid = {}; prods.forEach(p=>{ pid[safeId(p.id)] = p; });
   Object.keys(A.visto.prods).forEach(id=>{
     if(!pid[id]) add("prod-del:"+id,"alta","Producto borrado de la hoja Stock: "+id,
       `Era: ${A.visto.prods[id]}. Sus movimientos siguen en Movimientos.`+hist, {t:"prod",id});
   });
   prods.forEach(p=>{
-    const id = String(p.id).toUpperCase();
+    const id = safeId(p.id);
     if(!(id in A.visto.prods)){ A.visto.prods[id] = (p.zona+" · "+p.descripcion).slice(0,90); changed=true; }
   });
 
   /* 3) Huecos en la numeración (ING-, SAL-, DEV-) que no se conocían */
   const nums = {};
   Object.keys(ped).concat(Object.keys(A.visto.pedidos)).forEach(id=>{
-    const mt = id.match(/^([A-Z]+)-(\d+)$/); if(!mt) return;
+    const mt = id.match(/^([A-Z]+)[_-](\d+)$/); if(!mt) return;
     (nums[mt[1]] = nums[mt[1]] || new Set()).add(parseInt(mt[2],10));
   });
   Object.keys(nums).forEach(pre=>{
@@ -2081,11 +2110,11 @@ function altAnalizar(prods, movs){
     const nom = `${p.id} — ${p.descripcion} (${p.zona})`;
     const calc = r2(p.entradas - p.salidas + p.devoluciones);
     if(Math.abs(calc - p.stock_actual) > tol)
-      add("stk-int:"+p.id+":"+p.stock_actual,"alta","Stock actual pisado a mano: "+p.id,
+      add("stk-int:"+safeId(p.id)+":"+p.stock_actual,"alta","Stock actual pisado a mano: "+p.id,
         `${nom}. La planilla dice ${p.stock_actual} pero Entradas − Salidas + Devoluciones da ${calc}.`, null);
     const s = sum[k];
     if(!s){
-      if(p.entradas||p.salidas||p.devoluciones) add("stk-nomov:"+p.id,"media","Stock sin movimientos que lo respalden: "+p.id,
+      if(p.entradas||p.salidas||p.devoluciones) add("stk-nomov:"+safeId(p.id),"media","Stock sin movimientos que lo respalden: "+p.id,
         `${nom}. Tiene Entradas ${p.entradas}, Salidas ${p.salidas}, Devol. ${p.devoluciones} pero no hay ninguna fila en Movimientos (¿se borraron o es carga inicial?).`, null);
       return;
     }
@@ -2098,10 +2127,10 @@ function altAnalizar(prods, movs){
       const pista = real < p.stock_actual
         ? "Con los movimientos el stock sería menor: puede faltar una SALIDA (¿borrada?) o se editó el Stock a mano."
         : "Con los movimientos el stock sería mayor: puede faltar una ENTRADA (¿borrada?) o se editó el Stock a mano.";
-      add("stk-diff:"+p.id+":"+dif.join("|"),"alta","Stock no coincide con Movimientos: "+p.id,
+      add("stk-diff:"+safeId(p.id)+":"+dif.join("|"),"alta","Stock no coincide con Movimientos: "+p.id,
         `${nom}. ${dif.join(" · ")}. Stock según movimientos: ${real}; planilla: ${p.stock_actual}. ${pista}`, null);
     }
-    if(p.stock_actual < -tol) add("stk-neg:"+p.id+":"+p.stock_actual,"media","Stock negativo: "+p.id, `${nom}: ${p.stock_actual}.`, null);
+    if(p.stock_actual < -tol) add("stk-neg:"+safeId(p.id)+":"+p.stock_actual,"media","Stock negativo: "+p.id, `${nom}: ${p.stock_actual}.`, null);
   });
   Object.keys(sum).forEach(k=>{
     if(!claves.has(k)) add("mov-huerfano:"+k,"alta","Movimientos de un producto que no está en Stock",
