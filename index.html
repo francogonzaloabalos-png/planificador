@@ -364,6 +364,7 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
     <div class="sidebar-foot" style="flex-wrap:wrap;">
       <button id="syncBtn" style="width:100%;margin-bottom:6px;">⚙ Sincronización</button>
       <button id="exportExcelBtn" style="width:100%;margin-bottom:6px;">📊 Exportar a Excel</button>
+      <button id="exportRelevamientoBtn" style="width:100%;margin-bottom:6px;background:var(--amber);border-color:var(--amber);color:#fff;" title="Generar planilla para contar stock físico">📝 Planilla Relevamiento</button>
       <button id="exportBtn">Exportar</button>
       <button id="importBtn">Importar</button>
       <input type="file" id="importFile" accept="application/json" style="display:none">
@@ -1662,6 +1663,114 @@ async function exportExcel(){
 const exportExcelBtn = el("exportExcelBtn");
 if(exportExcelBtn) exportExcelBtn.onclick = exportExcel;
 else console.warn("No se encontró el botón #exportExcelBtn en el HTML — revisá que se haya agregado en el sidebar-foot.");
+
+async function exportExcelRelevamiento() {
+  if(typeof ExcelJS === "undefined"){
+    alert("No se pudo cargar la librería de Excel. Revisá tu conexión a internet.");
+    return;
+  }
+  const c = altCfg();
+  if(!c.url){
+    alert("Para descargar la planilla, primero configurá la URL del Excel (Apps Script) en la pestaña 'Alertas'.");
+    return;
+  }
+  
+  const btn = el("exportRelevamientoBtn");
+  const oldTxt = btn.textContent;
+  btn.textContent = "⏳ Descargando stock en vivo...";
+  btn.disabled = true;
+
+  try {
+    const res = await altFetch("json");
+    const list = res.productos || [];
+    if(!list.length) throw new Error("No se encontraron productos en la base de datos.");
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "Planificador";
+    workbook.created = new Date();
+    
+    const sheet = workbook.addWorksheet('Relevamiento', {
+        views: [{ state: 'frozen', ySplit: 4 }],
+        pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.2, right: 0.2, top: 0.3, bottom: 0.3, header: 0.1, footer: 0.1 } }
+    });
+
+    const headers = [
+        { key: 'id', label: 'ID Producto', width: 14 },
+        { key: 'zona', label: 'Depósito / Zona', width: 16 },
+        { key: 'familia', label: 'Familia', width: 18 },
+        { key: 'marca', label: 'Marca', width: 14 },
+        { key: 'descripcion', label: 'Descripción', width: 42 },
+        { key: 'ubicacion', label: 'Ubicación', width: 14 },
+        { key: 'stock_actual', label: 'Stock Actual', width: 10 },
+        { key: 'estado', label: 'Estado', width: 10 },
+        { key: 'relevado', label: 'Stock Relevado', width: 13 },
+        { key: 'ubic_encontradas', label: 'Ubicaciones encontradas', width: 18 },
+        { key: 'movido', label: 'MOVIDO DE LUGAR (SI/NO)', width: 18 },
+        { key: 'obs', label: 'OBSERVACIONES', width: 25 },
+    ];
+    sheet.columns = headers.map(h => ({ key: h.key, width: h.width }));
+
+    sheet.mergeCells(1, 2, 1, headers.length);
+    sheet.getRow(1).height = 25;
+    sheet.getRow(2).height = 22;
+    const titleCell = sheet.getCell(1, 2);
+    titleCell.value = 'RPM Construcciones - Reporte de Stock para Relevamiento';
+    titleCell.font = { bold: true, size: 14, color: { argb: 'FF0F172A' } };
+
+    sheet.mergeCells(2, 2, 2, headers.length);
+    const subCell = sheet.getCell(2, 2);
+    subCell.value = `Generado desde el Planificador: ${new Date().toLocaleString('es-AR')}  |  Total productos listados: ${list.length}`;
+    subCell.font = { italic: true, size: 10, color: { argb: 'FF64748B' } };
+
+    sheet.getRow(3).height = 4;
+
+    const headerRow = sheet.getRow(4);
+    headers.forEach((h, i) => {
+        const cell = headerRow.getCell(i + 1);
+        cell.value = h.label;
+        cell.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
+        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        cell.border = { top: { style: 'thin', color: { argb: 'FF000000' } }, left: { style: 'thin', color: { argb: 'FF000000' } }, bottom: { style: 'thin', color: { argb: 'FF000000' } }, right: { style: 'thin', color: { argb: 'FF000000' } } };
+    });
+    headerRow.height = 30;
+
+    const ubStr = p => [p.ubicacion_deposito, p.ubicacion_estante, p.ubicacion_columna, p.ubicacion_fila].filter(v=>v&&String(v).trim()!=='').join(' / ');
+
+    list.sort((a,b)=>(a.zona||"").localeCompare(b.zona||"") || (a.familia||"").localeCompare(b.familia||"")).forEach((p, idx) => {
+        const rowBg = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF1F5F9';
+        const row = sheet.addRow({
+            id: p.id, zona: p.zona, familia: p.familia, marca: p.marca || '—', descripcion: p.descripcion, ubicacion: ubStr(p) || '—', stock_actual: p.stock_actual || 0, estado: p.estado || '—', relevado: '', ubic_encontradas: '', movido: '', obs: ''
+        });
+        row.height = 32;
+        row.eachCell((cell, colNumber) => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+            cell.border = { top: { style: 'thin', color: { argb: 'FF64748B' } }, left: { style: 'thin', color: { argb: 'FF64748B' } }, bottom: { style: 'thin', color: { argb: 'FF64748B' } }, right: { style: 'thin', color: { argb: 'FF64748B' } } };
+            cell.font = { name: 'Calibri', size: 9 };
+            cell.alignment = { vertical: 'middle', wrapText: true };
+            if (colNumber === 1) cell.font = { name: 'Consolas', size: 9, bold: true, color: { argb: 'FF1E293B' } };
+            if (colNumber === 7) cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            if (colNumber >= 9) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } }; 
+        });
+    });
+
+    const buf = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buf], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `Planilla_Relevamiento_${Date.now()}.xlsx`;
+    a.click(); URL.revokeObjectURL(url);
+
+  } catch(err) {
+    alert("Error al descargar: " + err.message);
+  } finally {
+    btn.textContent = oldTxt;
+    btn.disabled = false;
+  }
+}
+
+const exportRelevamientoBtn = el("exportRelevamientoBtn");
+if(exportRelevamientoBtn) exportRelevamientoBtn.onclick = exportExcelRelevamiento;
 
 /* ================= EXPORT / IMPORT ================= */
 el("exportBtn").onclick = ()=>{
