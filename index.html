@@ -78,6 +78,40 @@ input,select,textarea{font-family:inherit;font-size:13px;}
 .sync-dot.ok{background:#4CAF7D;}
 .sync-dot.err{background:var(--red);}
 .sync-dot.pending{background:var(--amber);}
+.sidebar .brand{position:relative;padding-right:52px;transition:padding .25s ease;}
+.shell{gap:12px;padding:12px;background:var(--bg)}
+.sidebar{border-radius:12px;overflow:hidden;box-shadow:0 8px 24px rgba(28,35,51,.12)}
+.topbar{border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);}
+.sidebar-toggle{position:absolute;right:12px;top:18px;width:30px;height:30px;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:rgba(255,255,255,.08);color:#fff;display:grid;place-items:center;font-size:16px;transition:background .2s ease,transform .25s ease;}
+.sidebar-toggle:hover{background:rgba(255,255,255,.16)}
+.nav{gap:4px;padding:12px 10px}
+.nav button{min-height:40px;border-radius:8px;transition:background .2s ease,color .2s ease,transform .2s ease}
+.nav button:hover{transform:translateX(2px)}
+.nav-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar,.main{transition:width .28s cubic-bezier(.2,.8,.2,1),flex-basis .28s cubic-bezier(.2,.8,.2,1),margin .28s ease;}
+.sidebar-collapsed .sidebar{width:72px}
+.sidebar-collapsed .sidebar .brand{padding:18px 8px 14px;text-align:center}
+.sidebar-collapsed .sidebar .brand .name input{opacity:0;height:0;padding:0;pointer-events:none}
+.sidebar-collapsed .sidebar .brand:after{content:"P";display:block;font-size:18px;font-weight:700;line-height:30px;color:#fff}
+.sidebar-collapsed .sidebar .brand .sub{display:none}
+.sidebar-collapsed .sidebar-toggle{right:6px;top:7px;width:24px;height:24px;font-size:13px}
+.sidebar-collapsed .sidebar-toggle span{transform:rotate(180deg)}
+.sidebar-collapsed .nav{padding:12px 9px}
+.sidebar-collapsed .nav button{justify-content:center;padding:10px 4px;font-size:0;position:relative}
+.sidebar-collapsed .nav button .dot{display:none}
+.sidebar-collapsed .nav button:after{width:30px;height:30px;display:grid;place-items:center;border-radius:8px;background:rgba(255,255,255,.08);color:rgba(255,255,255,.9);font-size:11px;font-weight:700;letter-spacing:.02em}
+.sidebar-collapsed .nav button:nth-child(1):after{content:"G"}.sidebar-collapsed .nav button:nth-child(2):after{content:"T"}.sidebar-collapsed .nav button:nth-child(3):after{content:"L"}.sidebar-collapsed .nav button:nth-child(4):after{content:"E"}.sidebar-collapsed .nav button:nth-child(5):after{content:"B"}.sidebar-collapsed .nav button:nth-child(6):after{content:"I"}.sidebar-collapsed .nav button:nth-child(7):after{content:"D"}.sidebar-collapsed .nav button:nth-child(8):after{content:"S"}.sidebar-collapsed .nav button:nth-child(9):after{content:"R"}.sidebar-collapsed .nav button:nth-child(10):after{content:"A"}
+.sidebar-collapsed .nav button.active:after{background:rgba(255,255,255,.2);color:#fff}
+.sidebar-collapsed .nav-label{display:none}
+.sidebar-collapsed .nav button .badge{position:absolute;top:2px;right:2px;font-size:9px;padding:1px 4px}
+.sidebar-collapsed .sync-status{justify-content:center;padding:0 8px 10px;font-size:0}
+.sidebar-collapsed .sidebar-foot{padding:10px 8px;flex-direction:column;align-items:center}
+.sidebar-collapsed .sidebar-foot button{width:42px!important;height:38px;margin:0!important;padding:0;font-size:0;flex:none}
+.sidebar-collapsed #syncBtn:before{content:"⚙"}.sidebar-collapsed #exportExcelBtn:before{content:"▦"}.sidebar-collapsed #exportBtn:before{content:"⇧"}.sidebar-collapsed #importBtn:before{content:"⇩"}
+.sidebar-collapsed .sidebar-foot button:before{font-size:16px}
+.sidebar-collapsed .sidebar-foot button:hover{background:rgba(255,255,255,.16)}
+.sidebar-collapsed .topbar{padding-left:16px}
+@media(max-width:768px){.sidebar-toggle{display:none}.sidebar-collapsed .sidebar{width:100%}.sidebar-collapsed .sidebar .brand{padding:12px 14px 8px;text-align:left}.sidebar-collapsed .sidebar .brand .name input{opacity:1;height:auto;pointer-events:auto}.sidebar-collapsed .sidebar .brand:after{display:none}.sidebar-collapsed .sidebar .brand .sub{display:none}.sidebar-collapsed .nav{padding:6px 8px}.sidebar-collapsed .nav button{justify-content:flex-start;padding:9px 10px;font-size:13.5px}.sidebar-collapsed .nav-label{display:inline;}.sidebar-collapsed .nav button .dot{display:inline;width:6px;height:6px;box-shadow:none}.sidebar-collapsed .nav button:after{display:none}.sidebar-collapsed .sync-status{justify-content:flex-start;font-size:11.5px}.sidebar-collapsed .sidebar-foot{flex-direction:row;align-items:initial}.sidebar-collapsed .sidebar-foot button{width:auto!important;height:auto;padding:7px 6px;font-size:12px;flex:1}.sidebar-collapsed .sidebar-foot button:before{display:none}}
 
 .main{flex:1;display:flex;flex-direction:column;min-width:0;}
 .topbar{
@@ -338,6 +372,7 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
   /* Evita el zoom automático de iOS al tocar un campo */
   input,select,textarea{font-size:16px !important;}
 }
+.plant-section-tools{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;margin:10px 0}.plant-section-tools label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--ink-soft);flex:1 1 190px}.plant-section-tools input,.plant-group-select{border:1px solid var(--line);border-radius:5px;padding:6px 8px;color:var(--ink);background:#fff}.plant-section-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}.plant-section-chips>span{background:#f1f4f7;padding:4px 7px;border-radius:4px;font-size:11px}.plant-section-chips button{border:0;background:none;color:var(--red);font-size:14px;cursor:pointer}.plant-group-select{font-size:10px;max-width:155px}.plant-card-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.plant-panel-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:7px}.plant-panel-item{display:flex;align-items:center;gap:8px;cursor:grab;user-select:none;}.plant-panel-item.is-dragging{opacity:.45}.plant-panel-item.is-drop-target{border-color:var(--accent);background:var(--accent-soft)}.plant-panel-item{border:1px solid var(--line);border-radius:5px;padding:7px 8px;background:#fff;font-size:12px}.plant-panel-item.is-panel{background:#f4f8f5;border-color:#e2ebe4}.plant-panel-item.is-panel-off{color:#8a93a6;background:#fafafa}.plant-panel-item.is-panel-off .plant-panel-tag{visibility:hidden}.plant-panel-item input,.plant-column input{accent-color:var(--accent)}.plant-next-number{margin-left:auto;color:#486786;background:#eaf1f8;border-radius:3px;padding:1px 5px;font-size:10px}.plant-order-item.is-extra{background:#f3f7fc;border-color:#e2eaf3}.plant-extra-tag{font-size:9px;letter-spacing:.04em;color:#4d6785;background:#e6eef7;border-radius:3px;padding:2px 4px}.plant-table th.plant-extra-col{background:#dce8f5;color:#38536e}.plant-table td.plant-extra-col{background:#f2f6fb}.plant-legend{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:2px 0 10px;font-size:11px;color:var(--ink-soft)}.plant-legend-extra-chip{background:#eaf1f8;border:1px solid #dce6f1;border-radius:4px;padding:3px 7px;color:#486786}.plant-legend-chip{background:#edf4ef;border:1px solid #dce8df;border-radius:4px;padding:3px 7px;color:#46624f}.plant-order-item.is-panel{background:#f4f8f5;border-color:#e2ebe4}.plant-panel-tag{font-size:9px;letter-spacing:.04em;color:#58705f;background:#e8f0ea;border-radius:3px;padding:2px 4px}.plant-table th.plant-panel-col{background:#e5eee7;color:#405b48}.plant-table td.plant-panel-col{background:#f4f8f5}.plant-subtitle{display:block;font-size:12px;margin:8px 0}.plant-subtitle small{font-weight:400;color:var(--ink-soft);margin-left:6px}.plant-order-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr));gap:7px;margin-bottom:14px}.plant-extra-list{grid-template-columns:minmax(0,1fr)}.plant-order-item{display:flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:5px;background:#fff;padding:7px 8px;cursor:grab;user-select:none}.plant-order-item:active{cursor:grabbing}.plant-order-item.is-dragging{opacity:.45}.plant-order-item.is-drop-target{border-color:var(--accent);background:var(--accent-soft)}.plant-drag-handle{font-size:17px;color:var(--ink-soft);line-height:1}.plant-order-number{font-size:11px;color:var(--ink-soft);min-width:18px}.plant-order-label{flex:1 1 170px;min-width:0;font-size:12px;white-space:normal;overflow-wrap:anywhere;line-height:1.35}.plant-extra-toggle{accent-color:var(--accent);flex:none}.plant-extra-list .plant-order-item{flex-wrap:wrap;align-items:center}.plant-extra-list .plant-order-label{flex:1 1 200px;white-space:normal;overflow-wrap:anywhere}.plant-extra-list .plant-group-select{flex:0 1 220px;max-width:220px}.plant-panel-item .plant-order-label{flex:1 1 auto;min-width:0;white-space:normal;overflow-wrap:anywhere}.plant-print{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink-soft)}.plant-print select{border:1px solid var(--line);border-radius:5px;padding:6px 8px;color:var(--ink);background:white}.plant-source{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}.plant-source label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--ink-soft);flex:1 1 280px}.plant-source input{border:1px solid var(--line);border-radius:5px;padding:8px 10px;min-width:180px;color:var(--ink)}.plant-source-hint{display:block;color:var(--ink-soft);font-size:11px;margin-top:8px}.plant-wrap{display:flex;flex-direction:column;gap:12px}.plant-intro,.plant-card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;box-shadow:var(--shadow)}.plant-intro{display:flex;align-items:center;justify-content:space-between;gap:16px}.plant-intro h2{font-size:18px;margin:0 0 4px}.plant-intro p{margin:0;color:var(--ink-soft);font-size:12.5px}.plant-card-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}.plant-card-title span,.plant-preview-note,.plant-muted,.plant-add small{font-size:11.5px;color:var(--ink-soft)}.plant-filter-grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}.plant-filter{border:1px solid var(--line);border-radius:6px;padding:10px}.plant-filter-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.plant-checks{display:flex;flex-wrap:wrap;gap:7px 12px;max-height:115px;overflow:auto}.plant-checks label,.plant-column{display:flex;align-items:center;gap:6px;font-size:12px}.plant-search{display:flex;align-items:center;gap:10px;margin-top:10px}.plant-search input,.plant-add input{border:1px solid var(--line);border-radius:5px;padding:8px 10px;min-width:220px}.plant-search span{font-size:11px;color:var(--ink-soft)}.plant-columns{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px 10px}.plant-column{border:1px solid var(--line-soft);border-radius:5px;padding:6px 8px}.plant-column input,.plant-checks input{accent-color:var(--accent)}.plant-column span{flex:1}.plant-remove{border:0;background:none;color:var(--red);font-size:17px;line-height:1;cursor:pointer}.plant-add{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}.plant-table-wrap{overflow:auto;max-height:330px;border:1px solid var(--line);border-radius:5px;margin-top:8px}.plant-table{border-collapse:collapse;width:100%;font-size:11.5px;white-space:nowrap}.plant-table th{position:sticky;top:0;background:#334155;color:white;text-align:left;padding:8px}.plant-table td{padding:7px 8px;border-top:1px solid var(--line-soft);max-width:300px;overflow:hidden;text-overflow:ellipsis}.plant-table tbody tr:nth-child(even){background:#F5F6F8}.plant-empty{text-align:center;color:var(--ink-soft);padding:22px!important}.plant-error{background:var(--red-soft);color:var(--red);padding:10px 12px;border-radius:6px}.plant-intro .btn:disabled,.plant-card .btn:disabled{opacity:.55;cursor:not-allowed}@media(max-width:700px){.plant-panel-list{grid-template-columns:minmax(0,1fr)}.plant-panel-item{flex-wrap:wrap}.plant-order-item{flex-wrap:wrap}.plant-group-select{flex:1 1 135px;max-width:none}.plant-extra-list .plant-group-select{flex:1 1 150px;max-width:none}.plant-filter-grid{grid-template-columns:1fr}.plant-intro{align-items:flex-start;flex-direction:column}.plant-search{align-items:flex-start;flex-direction:column}}
 </style>
 </head>
 <body>
@@ -348,23 +383,24 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
     <div class="brand">
       <div class="name"><input id="projectName" value="Proyecto sin nombre"></div>
       <div class="sub">Planificador de equipo</div>
+      <button type="button" class="sidebar-toggle" id="sidebarToggle" aria-label="Contraer menú" aria-expanded="true" title="Contraer menú"><span aria-hidden="true">‹</span></button>
     </div>
     <nav class="nav">
-      <button data-view="gantt" class="active"><span class="dot"></span>Gantt</button>
-      <button data-view="kanban"><span class="dot"></span>Tablero</button>
-      <button data-view="table"><span class="dot"></span>Listado</button>
-      <button data-view="team"><span class="dot"></span>Equipo</button>
-      <button data-view="log"><span class="dot"></span>Bitácora</button>
-      <button data-view="indicators"><span class="dot"></span>Indicadores</button>
-      <button data-view="dashboard"><span class="dot"></span>Dashboard</button>
-      <button data-view="stock"><span class="dot"></span>Stock y remitos</button>
-<button data-view="alertas"><span class="dot"></span>Alertas <span id="altBadge" class="badge atrasado" style="display:none"></span></button>
+      <button data-view="gantt" class="active"><span class="dot"></span><span class="nav-label">Gantt</span></button>
+      <button data-view="kanban"><span class="dot"></span><span class="nav-label">Tablero</span></button>
+      <button data-view="table"><span class="dot"></span><span class="nav-label">Listado</span></button>
+      <button data-view="team"><span class="dot"></span><span class="nav-label">Equipo</span></button>
+      <button data-view="log"><span class="dot"></span><span class="nav-label">Bitácora</span></button>
+      <button data-view="indicators"><span class="dot"></span><span class="nav-label">Indicadores</span></button>
+      <button data-view="dashboard"><span class="dot"></span><span class="nav-label">Dashboard</span></button>
+      <button data-view="stock"><span class="dot"></span><span class="nav-label">Stock y remitos</span></button>
+      <button data-view="plantilla"><span class="dot"></span><span class="nav-label">Plantilla de relevamiento</span></button>
+      <button data-view="alertas"><span class="dot"></span><span class="nav-label">Alertas</span><span id="altBadge" class="badge atrasado" style="display:none"></span></button>
     </nav>
     <div class="sync-status" id="syncStatus"><span class="sync-dot" id="syncDot"></span><span id="syncText">Sincronización no configurada</span></div>
     <div class="sidebar-foot" style="flex-wrap:wrap;">
       <button id="syncBtn" style="width:100%;margin-bottom:6px;">⚙ Sincronización</button>
       <button id="exportExcelBtn" style="width:100%;margin-bottom:6px;">📊 Exportar a Excel</button>
-      <button id="exportRelevamientoBtn" style="width:100%;margin-bottom:6px;background:var(--amber);border-color:var(--amber);color:#fff;" title="Generar planilla para contar stock físico">📝 Planilla Relevamiento</button>
       <button id="exportBtn">Exportar</button>
       <button id="importBtn">Importar</button>
       <input type="file" id="importFile" accept="application/json" style="display:none">
@@ -821,12 +857,25 @@ function stageById(id){ return state.stages.find(s=>s.id===id); }
 function tasksByStage(stageId){ return state.tasks.filter(t=>t.stageId===stageId); }
 
 /* ---------------- nav ---------------- */
+const sidebarToggle = el("sidebarToggle");
+function setSidebarCollapsed(collapsed){
+  document.querySelector(".shell").classList.toggle("sidebar-collapsed",collapsed);
+  sidebarToggle.setAttribute("aria-expanded",String(!collapsed));
+  sidebarToggle.setAttribute("aria-label",collapsed?"Expandir menú":"Contraer menú");
+  sidebarToggle.title=collapsed?"Expandir menú":"Contraer menú";
+  document.querySelectorAll(".nav button").forEach(btn=>{btn.title=collapsed?(btn.querySelector(".nav-label")?.textContent||""):"";});
+  try{localStorage.setItem("planificador_sidebar_collapsed",collapsed?"1":"0");}catch{}
+}
+let sidebarInitiallyCollapsed=false;
+try{sidebarInitiallyCollapsed=localStorage.getItem("planificador_sidebar_collapsed")==="1";}catch{}
+setSidebarCollapsed(sidebarInitiallyCollapsed);
+sidebarToggle.addEventListener("click",()=>setSidebarCollapsed(!document.querySelector(".shell").classList.contains("sidebar-collapsed")));
 document.querySelectorAll(".nav button").forEach(btn=>{
   btn.addEventListener("click", ()=>{
     document.querySelectorAll(".nav button").forEach(b=>b.classList.remove("active"));
     btn.classList.add("active");
     currentView = btn.dataset.view;
-const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal", indicators:"Registro de indicadores", dashboard:"Dashboard de indicadores", stock:"Stock y remitos", alertas:"Alertas de integridad"};
+const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal", indicators:"Registro de indicadores", dashboard:"Dashboard de indicadores", stock:"Stock y remitos", plantilla:"Plantilla de relevamiento", alertas:"Alertas de integridad"};
     el("viewTitle").textContent = titles[currentView];
     render();
   });
@@ -855,6 +904,7 @@ function render(){
   else if(currentView==="indicators") renderIndicators();
   else if(currentView==="dashboard") renderDashboard();
   else if(currentView==="stock") renderStock();
+  else if(currentView==="plantilla") renderPlantilla();
   else if(currentView==="alertas") renderAlertas();
 }
 
@@ -1664,114 +1714,51 @@ const exportExcelBtn = el("exportExcelBtn");
 if(exportExcelBtn) exportExcelBtn.onclick = exportExcel;
 else console.warn("No se encontró el botón #exportExcelBtn en el HTML — revisá que se haya agregado en el sidebar-foot.");
 
-async function exportExcelRelevamiento() {
-  if(typeof ExcelJS === "undefined"){
-    alert("No se pudo cargar la librería de Excel. Revisá tu conexión a internet.");
-    return;
-  }
-  const c = altCfg();
-  if(!c.url){
-    alert("Para descargar la planilla, primero configurá la URL del Excel (Apps Script) en la pestaña 'Alertas'.");
-    return;
-  }
-  
-  const btn = el("exportRelevamientoBtn");
-  const oldTxt = btn.textContent;
-  btn.textContent = "⏳ Descargando stock en vivo...";
-  btn.disabled = true;
-
-  try {
-    const res = await altFetch("json");
-    const list = res.productos || [];
-    if(!list.length) throw new Error("No se encontraron productos en la base de datos.");
-
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = "Planificador";
-    workbook.created = new Date();
-    
-    const sheet = workbook.addWorksheet('Relevamiento', {
-        views: [{ state: 'frozen', ySplit: 4 }],
-        pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.2, right: 0.2, top: 0.3, bottom: 0.3, header: 0.1, footer: 0.1 } }
-    });
-
-    const headers = [
-        { key: 'id', label: 'ID Producto', width: 14 },
-        { key: 'zona', label: 'Depósito / Zona', width: 16 },
-        { key: 'familia', label: 'Familia', width: 18 },
-        { key: 'marca', label: 'Marca', width: 14 },
-        { key: 'descripcion', label: 'Descripción', width: 42 },
-        { key: 'ubicacion', label: 'Ubicación', width: 14 },
-        { key: 'stock_actual', label: 'Stock Actual', width: 10 },
-        { key: 'estado', label: 'Estado', width: 10 },
-        { key: 'relevado', label: 'Stock Relevado', width: 13 },
-        { key: 'ubic_encontradas', label: 'Ubicaciones encontradas', width: 18 },
-        { key: 'movido', label: 'MOVIDO DE LUGAR (SI/NO)', width: 18 },
-        { key: 'obs', label: 'OBSERVACIONES', width: 25 },
-    ];
-    sheet.columns = headers.map(h => ({ key: h.key, width: h.width }));
-
-    sheet.mergeCells(1, 2, 1, headers.length);
-    sheet.getRow(1).height = 25;
-    sheet.getRow(2).height = 22;
-    const titleCell = sheet.getCell(1, 2);
-    titleCell.value = 'RPM Construcciones - Reporte de Stock para Relevamiento';
-    titleCell.font = { bold: true, size: 14, color: { argb: 'FF0F172A' } };
-
-    sheet.mergeCells(2, 2, 2, headers.length);
-    const subCell = sheet.getCell(2, 2);
-    subCell.value = `Generado desde el Planificador: ${new Date().toLocaleString('es-AR')}  |  Total productos listados: ${list.length}`;
-    subCell.font = { italic: true, size: 10, color: { argb: 'FF64748B' } };
-
-    sheet.getRow(3).height = 4;
-
-    const headerRow = sheet.getRow(4);
-    headers.forEach((h, i) => {
-        const cell = headerRow.getCell(i + 1);
-        cell.value = h.label;
-        cell.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
-        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-        cell.border = { top: { style: 'thin', color: { argb: 'FF000000' } }, left: { style: 'thin', color: { argb: 'FF000000' } }, bottom: { style: 'thin', color: { argb: 'FF000000' } }, right: { style: 'thin', color: { argb: 'FF000000' } } };
-    });
-    headerRow.height = 30;
-
-    const ubStr = p => [p.ubicacion_deposito, p.ubicacion_estante, p.ubicacion_columna, p.ubicacion_fila].filter(v=>v&&String(v).trim()!=='').join(' / ');
-
-    list.sort((a,b)=>(a.zona||"").localeCompare(b.zona||"") || (a.familia||"").localeCompare(b.familia||"")).forEach((p, idx) => {
-        const rowBg = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF1F5F9';
-        const row = sheet.addRow({
-            id: p.id, zona: p.zona, familia: p.familia, marca: p.marca || '—', descripcion: p.descripcion, ubicacion: ubStr(p) || '—', stock_actual: p.stock_actual || 0, estado: p.estado || '—', relevado: '', ubic_encontradas: '', movido: '', obs: ''
-        });
-        row.height = 32;
-        row.eachCell((cell, colNumber) => {
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
-            cell.border = { top: { style: 'thin', color: { argb: 'FF64748B' } }, left: { style: 'thin', color: { argb: 'FF64748B' } }, bottom: { style: 'thin', color: { argb: 'FF64748B' } }, right: { style: 'thin', color: { argb: 'FF64748B' } } };
-            cell.font = { name: 'Calibri', size: 9 };
-            cell.alignment = { vertical: 'middle', wrapText: true };
-            if (colNumber === 1) cell.font = { name: 'Consolas', size: 9, bold: true, color: { argb: 'FF1E293B' } };
-            if (colNumber === 7) cell.alignment = { horizontal: 'center', vertical: 'middle' };
-            if (colNumber >= 9) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } }; 
-        });
-    });
-
-    const buf = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buf], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `Planilla_Relevamiento_${Date.now()}.xlsx`;
-    a.click(); URL.revokeObjectURL(url);
-
-  } catch(err) {
-    alert("Error al descargar: " + err.message);
-  } finally {
-    btn.textContent = oldTxt;
-    btn.disabled = false;
-  }
-}
-
-const exportRelevamientoBtn = el("exportRelevamientoBtn");
-if(exportRelevamientoBtn) exportRelevamientoBtn.onclick = exportExcelRelevamiento;
-
+/* ================= PLANTILLA DE RELEVAMIENTO ================= */
+const PLANT_CFG_KEY="planificador_plantilla_cfg_v1";
+const plant={productos:[],loading:false,error:"",search:"",familias:null,zonas:null,url:"",token:"",configLoaded:false,columns:[],panelSelected:["id","zona","familia","marca","descripcion","ubicacion","unidad","stock_minimo","stock_actual","estado","ult_mov","ult_fecha"],panelOrder:["id","zona","familia","marca","descripcion","ubicacion","unidad","stock_minimo","stock_actual","estado","ult_mov","ult_fecha"],extraColumns:[],custom:[],extraGroupByKey:{},customSections:[],relevamientoLabel:"Campos de relevamiento",orientation:"landscape",dragKey:null,undoSnapshot:null};
+const PLANT_PANEL_COLUMNS=["id","zona","familia","marca","descripcion","ubicacion","unidad","stock_minimo","stock_actual","estado","ult_mov","ult_fecha"];
+const PLANT_FIELDS=[["id","ID Producto"],["zona","Depósito / Zona"],["familia","Familia"],["marca","Marca"],["descripcion","Descripción"],["ubicacion","Ubicación"],["unidad","Unidad"],["stock_minimo","Stock Mínimo"],["stock_actual","Stock Actual"],["estado","Estado"],["ult_mov","Últ. Movimiento"],["ult_fecha","Fecha Últ. Mov."],["entradas","Entradas"],["salidas","Salidas"],["devoluciones","Devoluciones"],["ubicacion_deposito","Depósito (ubicación)"],["ubicacion_estante","Estante"],["ubicacion_columna","Columna"],["ubicacion_fila","Fila"],["ult_hora","Hora último movimiento"],["ult_obs","Observaciones del sistema"],["relevado","Stock Relevado"],["ubic_encontradas","Ubicaciones encontradas"],["movido","Movido de lugar (Sí/No)"],["obs","Observaciones del relevamiento"]];
+function plantReadConfig(){try{return JSON.parse(activeStorage().getItem(PLANT_CFG_KEY))||null;}catch(e){return null;}}
+function plantWriteConfig(){try{activeStorage().setItem(PLANT_CFG_KEY,JSON.stringify({url:plant.url,token:plant.token,orientation:plant.orientation}));}catch(e){}}
+function plantEnsureConfig(){if(plant.configLoaded)return;const saved=plantReadConfig();if(saved){plant.url=saved.url||"";plant.token=saved.token||"";plant.orientation=saved.orientation||"landscape";}else{const shared=altCfg();plant.url=shared.url||"";plant.token=shared.token||"";}plant.configLoaded=true;}
+async function plantFetch(action){if(!plant.url.trim())throw new Error("Ingresá la URL del Apps Script para este relevamiento.");let u;try{u=new URL(plant.url.trim());}catch(e){throw new Error("La URL ingresada no es válida.");}u.searchParams.set("action",action);if(plant.token.trim())u.searchParams.set("token",plant.token.trim());const r=await fetch(u.toString());const j=await r.json();if(!j.ok)throw new Error(j.error||"Respuesta inválida del Apps Script.");return j;}
+const PLANT_RELEVAMIENTO_COLUMNS=["relevado","ubic_encontradas","movido","obs"];
+function plantSyncColumns(){plant.columns=plant.panelOrder.filter(k=>plant.panelSelected.includes(k)).concat(plant.extraColumns);}
+function plantLabel(k){return PLANT_FIELDS.find(x=>x[0]===k)?.[1]||plant.custom.find(x=>x.key===k)?.label||k;}
+function plantValue(p,k){if(k==="ubicacion")return [p.ubicacion_deposito,p.ubicacion_estante,p.ubicacion_columna,p.ubicacion_fila].filter(v=>v!==undefined&&v!==null&&String(v).trim()!=="").join(" / ")||"—";if(k==="ult_fecha")return [p.ult_fecha,p.ult_hora].filter(Boolean).join(" ");if(["relevado","ubic_encontradas","movido","obs"].includes(k)||plant.custom.some(c=>c.key===k))return "";return p[k]??"";}
+function plantProducts(){const fam=new Set(plant.familias||[]),zon=new Set(plant.zonas||[]),q=plant.search.trim().toLocaleLowerCase();return plant.productos.filter(p=>(!Array.isArray(plant.familias)||fam.has(String(p.familia||"")))&&(!Array.isArray(plant.zonas)||zon.has(String(p.zona||"")))&&(!q||[p.id,p.zona,p.familia,p.marca,p.descripcion].some(v=>String(v||"").toLocaleLowerCase().includes(q)))).sort((a,b)=>String(a.zona||"").localeCompare(String(b.zona||""),"es")||String(a.familia||"").localeCompare(String(b.familia||""),"es")||String(a.descripcion||"").localeCompare(String(b.descripcion||""),"es"));}
+function plantFilterOptions(key,selected){const vals=[...new Set(plant.productos.map(p=>String(p[key]||"")).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"es")),all=vals.length>0&&(!Array.isArray(selected)||selected.length===vals.length);return `<div class="plant-filter"><div class="plant-filter-head"><b>${key==="familia"?"Familias":"Zonas"}</b><button class="btn ghost small" data-plant-all="${key}">${all?"Quitar todas":"Seleccionar todas"}</button></div><div class="plant-checks">${vals.map(v=>`<label><input type="checkbox" data-plant-filter="${key}" value="${escapeAttr(v)}" ${!Array.isArray(selected)||selected.includes(v)?"checked":""}><span>${escapeHtml(v)}</span></label>`).join("")||`<span class="plant-muted">Cargá el stock para ver opciones.</span>`}</div></div>`;}
+function renderPlantilla(){
+  plantEnsureConfig();plantSyncColumns();const rows=plantProducts(),allFields=[...PLANT_FIELDS,...plant.custom.map(c=>[c.key,c.label])],fieldLabel=k=>allFields.find(x=>x[0]===k)?.[1]||plantLabel(k),addedFields=plant.extraColumns.map((k,i)=>({key:k,label:fieldLabel(k),number:plant.panelSelected.length+i+1,section:plant.extraGroupByKey[k]||"relevamiento"})),availableRelevamiento=allFields.filter(([k])=>PLANT_RELEVAMIENTO_COLUMNS.includes(k)&&!plant.extraColumns.includes(k)),availableOther=allFields.filter(([k])=>!PLANT_PANEL_COLUMNS.includes(k)&&!PLANT_RELEVAMIENTO_COLUMNS.includes(k)&&!plant.extraColumns.includes(k));
+  viewEl.innerHTML=`<div class="plant-wrap"><div class="plant-intro"><div><h2>Plantilla de relevamiento</h2><p>Elegí una fuente para esta planilla, filtrá los productos y configurá las columnas del Excel.</p></div><button class="btn accent" id="plantLoad" ${plant.loading?"disabled":""}>${plant.loading?"⏳ Cargando stock…":"↻ Cargar stock en vivo"}</button></div>
+    <div class="plant-card"><div class="plant-card-title"><b>Fuente de datos</b><span>Independiente de Alertas</span></div><div class="plant-source"><label>URL del Apps Script<input id="plantUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec" value="${escapeAttr(plant.url)}"></label><label>Token (si corresponde)<input id="plantToken" type="password" placeholder="Token de acceso" value="${escapeAttr(plant.token)}"></label><button class="btn ghost small" id="plantSaveConfig">Guardar fuente</button></div><small class="plant-source-hint">Se copia inicialmente la URL y el token de Alertas como punto de partida. Podés cambiarlos acá sin modificar Alertas. La URL debe responder a la acción «json» con productos.</small></div>
+    ${plant.error?`<div class="plant-error">${escapeHtml(plant.error)}</div>`:""}<div class="plant-card"><div class="plant-card-title"><b>1. Elegí los productos</b><span>${plant.productos.length?`${rows.length} de ${plant.productos.length} productos`:"Stock sin cargar"}</span></div><div class="plant-filter-grid">${plantFilterOptions("familia",plant.familias)}${plantFilterOptions("zona",plant.zonas)}</div><div class="plant-search"><input id="plantSearch" placeholder="Buscar ID, descripción, marca…" value="${escapeAttr(plant.search)}"><span>Los filtros vacíos incluyen todas las opciones.</span></div></div>
+    <div class="plant-card"><div class="plant-card-title"><b>2. Columnas incluidas en el Excel</b><div class="plant-card-actions"><span>${plant.columns.length} columnas activas</span><button type="button" class="btn ghost small" id="plantReset">Restablecer al original</button>${plant.undoSnapshot?`<button type="button" class="btn ghost small" id="plantUndoReset">Deshacer</button>`:""}</div></div><div class="plant-legend"><span class="plant-legend-chip">Verde · columnas originales de PANEL</span><span class="plant-legend-extra-chip">Azul · campos agregados</span></div><div class="plant-panel-list">${plant.panelOrder.map((k,i)=>{const checked=plant.panelSelected.includes(k),number=checked?plant.panelSelected.indexOf(k)+1:"";return `<label class="plant-panel-item ${checked?"is-panel":"is-panel-off"}" draggable="true" data-plant-panel-order="${escapeAttr(k)}"><span class="plant-drag-handle" title="Arrastrar para mover">⠿</span><input type="checkbox" data-plant-panel="${escapeAttr(k)}" ${checked?"checked":""}><b class="plant-order-number">${number}</b><span class="plant-order-label">${escapeHtml(fieldLabel(k))}</span><small class="plant-panel-tag">PANEL</small></label>`;}).join("")}</div></div>
+    <div class="plant-card"><div class="plant-card-title"><b>3. Agregar columnas</b><span>${plant.extraColumns.length} campos agregados</span></div><div class="plant-section-tools"><label>Nombre del grupo principal<input id="plantRelevanceTitle" value="${escapeAttr(plant.relevamientoLabel)}"></label><label>Nuevo apartado<input id="plantSectionName" placeholder="Ej. Control de calidad"></label><button type="button" class="btn ghost small" id="plantAddSection">+ Crear apartado</button></div><div class="plant-section-chips">${plant.customSections.map(s=>`<span>${escapeHtml(s.label)} <button type="button" data-plant-section-remove="${escapeAttr(s.id)}" title="Quitar apartado">×</button></span>`).join("")}</div><b class="plant-subtitle">${escapeHtml(plant.relevamientoLabel)}</b><div class="plant-columns">${availableRelevamiento.map(([k,label])=>`<label class="plant-column"><input type="checkbox" data-plant-extra="${escapeAttr(k)}"><span>${escapeHtml(label)}</span><small class="plant-next-number">${plant.panelSelected.length+plant.extraColumns.length+1}</small></label>`).join("")||`<span class="plant-muted">Ya agregaste todos los campos de relevamiento.</span>`}</div>${addedFields.length?`<b class="plant-subtitle">Campos incluidos en el relevamiento <small>Se suman después de PANEL; arrastrá para reordenar.</small></b><div class="plant-order-list plant-extra-list">${addedFields.map(x=>`<div class="plant-order-item is-extra" draggable="true" data-plant-order="${escapeAttr(x.key)}"><span class="plant-drag-handle" title="Arrastrar para mover">⠿</span><b class="plant-order-number">${x.number}</b><span class="plant-order-label">${escapeHtml(x.label)}</span><input type="checkbox" class="plant-extra-toggle" data-plant-extra-toggle="${escapeAttr(x.key)}" checked title="Incluir esta columna"><select class="plant-group-select" data-plant-extra-group="${escapeAttr(x.key)}"><option value="relevamiento" ${x.section==="relevamiento"?"selected":""}>${escapeHtml(plant.relevamientoLabel)}</option>${plant.customSections.map(s=>`<option value="${escapeAttr(s.id)}" ${x.section===s.id?"selected":""}>${escapeHtml(s.label)}</option>`).join("")}</select><button type="button" class="plant-remove" data-plant-remove="${escapeAttr(x.key)}" title="Quitar columna">×</button></div>`).join("")}</div>`:""}<b class="plant-subtitle">Otros datos disponibles</b><div class="plant-columns">${availableOther.map(([k,label])=>`<label class="plant-column"><input type="checkbox" data-plant-extra="${escapeAttr(k)}"><span>${escapeHtml(label)}</span><small class="plant-next-number">${plant.panelSelected.length+plant.extraColumns.length+1}</small></label>`).join("")||`<span class="plant-muted">No hay otros datos disponibles.</span>`}</div><div class="plant-add"><input id="plantNewColumn" maxlength="40" placeholder="Nombre de nueva columna (ej. N° de lote)"><button class="btn ghost small" id="plantAddColumn">+ Crear columna</button><small>Las nuevas columnas se agregan al final y quedan vacías para completar.</small></div></div>
+    <div class="plant-card"><div class="plant-card-title"><b>Vista previa</b><div class="plant-print"><label for="plantOrientation">Orientación de impresión</label><select id="plantOrientation"><option value="landscape" ${plant.orientation==="landscape"?"selected":""}>Horizontal (recomendado)</option><option value="portrait" ${plant.orientation==="portrait"?"selected":""}>Vertical</option></select></div></div><div class="plant-legend"><span class="plant-legend-chip">Verde · columnas originales de PANEL</span><span class="plant-legend-extra-chip">Azul · campos agregados</span></div><div class="plant-preview-note">La vista previa refleja el orden final: PANEL primero y los campos agregados a continuación.</div><div class="plant-table-wrap"><table class="plant-table"><thead><tr>${plant.columns.map(k=>`<th class="${PLANT_PANEL_COLUMNS.includes(k)?"plant-panel-col":"plant-extra-col"}">${escapeHtml(plantLabel(k))}</th>`).join("")||"<th>Seleccioná al menos una columna</th>"}</tr></thead><tbody>${rows.slice(0,12).map(p=>`<tr>${plant.columns.map(k=>`<td class="${PLANT_PANEL_COLUMNS.includes(k)?"plant-panel-col":"plant-extra-col"}">${escapeHtml(String(plantValue(p,k)))}</td>`).join("")}</tr>`).join("")||`<tr><td colspan="${Math.max(plant.columns.length,1)}" class="plant-empty">${plant.productos.length?"No hay productos con esos filtros.":"Cargá el stock para ver la vista previa."}</td></tr>`}</tbody></table></div><div class="plant-preview-note">Vista previa de hasta 12 productos · ${rows.length} productos para exportar</div><button class="btn accent small" id="plantExport" style="margin-top:10px;" ${!rows.length||!plant.columns.length?"disabled":""}>⬇ Descargar Excel editable</button></div></div>`;
+  el("plantSaveConfig").onclick=()=>{plant.url=el("plantUrl").value.trim();plant.token=el("plantToken").value.trim();plantWriteConfig();plant.error="";plant.productos=[];plant.familias=null;plant.zonas=null;renderPlantilla();};
+  el("plantLoad").onclick=loadPlantStock;el("plantSearch").oninput=e=>{plant.search=e.target.value;renderPlantilla();const x=el("plantSearch");x.focus();x.setSelectionRange(x.value.length,x.value.length);};
+  viewEl.querySelectorAll("[data-plant-filter]").forEach(cb=>cb.onchange=()=>{const k=cb.dataset.plantFilter;plant[k+"s"]=[...viewEl.querySelectorAll(`[data-plant-filter="${k}"]:checked`)].map(x=>x.value);renderPlantilla();});
+  viewEl.querySelectorAll("[data-plant-all]").forEach(b=>b.onclick=()=>{const k=b.dataset.plantAll,vals=[...new Set(plant.productos.map(p=>String(p[k]||"")).filter(Boolean))];plant[k+"s"]=Array.isArray(plant[k+"s"])&&plant[k+"s"].length===vals.length?[]:vals;renderPlantilla();});
+  viewEl.querySelectorAll("[data-plant-panel]").forEach(cb=>cb.onchange=()=>{const k=cb.dataset.plantPanel;if(cb.checked&&!plant.panelSelected.includes(k))plant.panelSelected.push(k);else plant.panelSelected=plant.panelSelected.filter(x=>x!==k);plant.panelSelected=plant.panelOrder.filter(x=>plant.panelSelected.includes(x));plantSyncColumns();renderPlantilla();});
+  viewEl.querySelectorAll("[data-plant-extra-toggle]").forEach(cb=>cb.onchange=()=>{const k=cb.dataset.plantExtraToggle;if(cb.checked&&!plant.extraColumns.includes(k)){plant.extraColumns.push(k);plant.extraGroupByKey[k]="relevamiento";}else{plant.extraColumns=plant.extraColumns.filter(x=>x!==k);delete plant.extraGroupByKey[k];}plantSyncColumns();renderPlantilla();});
+  viewEl.querySelectorAll("[data-plant-extra]").forEach(cb=>cb.onchange=()=>{const k=cb.dataset.plantExtra;if(cb.checked&&!plant.extraColumns.includes(k)){plant.extraColumns.push(k);plant.extraGroupByKey[k]="relevamiento";}else{plant.extraColumns=plant.extraColumns.filter(x=>x!==k);delete plant.extraGroupByKey[k];}plantSyncColumns();renderPlantilla();});
+  viewEl.querySelectorAll("[data-plant-panel-order]").forEach(item=>{item.ondragstart=e=>{plant.dragKey=item.dataset.plantPanelOrder;e.dataTransfer.setData("text/plain",plant.dragKey);e.dataTransfer.effectAllowed="move";item.classList.add("is-dragging");};item.ondragend=()=>{plant.dragKey=null;viewEl.querySelectorAll(".is-dragging,.is-drop-target").forEach(x=>x.classList.remove("is-dragging","is-drop-target"));};item.ondragover=e=>{e.preventDefault();e.dataTransfer.dropEffect="move";item.classList.add("is-drop-target");};item.ondragleave=()=>item.classList.remove("is-drop-target");item.ondrop=e=>{e.preventDefault();item.classList.remove("is-drop-target");const fromKey=e.dataTransfer.getData("text/plain")||plant.dragKey,toKey=item.dataset.plantPanelOrder,from=plant.panelOrder.indexOf(fromKey),to=plant.panelOrder.indexOf(toKey);if(from<0||to<0||from===to)return;const [moved]=plant.panelOrder.splice(from,1);plant.panelOrder.splice(to,0,moved);plant.panelSelected=plant.panelOrder.filter(k=>plant.panelSelected.includes(k));plantSyncColumns();renderPlantilla();};});
+  viewEl.querySelectorAll("[data-plant-order]").forEach(item=>{item.ondragstart=e=>{plant.dragKey=item.dataset.plantOrder;e.dataTransfer.setData("text/plain",plant.dragKey);e.dataTransfer.effectAllowed="move";item.classList.add("is-dragging");};item.ondragend=()=>{plant.dragKey=null;viewEl.querySelectorAll(".is-dragging,.is-drop-target").forEach(x=>x.classList.remove("is-dragging","is-drop-target"));};item.ondragover=e=>{e.preventDefault();e.dataTransfer.dropEffect="move";item.classList.add("is-drop-target");};item.ondragleave=()=>item.classList.remove("is-drop-target");item.ondrop=e=>{e.preventDefault();item.classList.remove("is-drop-target");const fromKey=e.dataTransfer.getData("text/plain")||plant.dragKey,toKey=item.dataset.plantOrder,from=plant.extraColumns.indexOf(fromKey),to=plant.extraColumns.indexOf(toKey);if(from<0||to<0||from===to)return;const [moved]=plant.extraColumns.splice(from,1);plant.extraColumns.splice(to,0,moved);plantSyncColumns();renderPlantilla();};});
+    viewEl.querySelectorAll("[data-plant-remove]").forEach(b=>b.onclick=()=>{plant.extraColumns=plant.extraColumns.filter(k=>k!==b.dataset.plantRemove);plant.custom=plant.custom.filter(c=>c.key!==b.dataset.plantRemove);delete plant.extraGroupByKey[b.dataset.plantRemove];plantSyncColumns();renderPlantilla();});
+  viewEl.querySelectorAll("[data-plant-extra-group]").forEach(sel=>sel.onchange=()=>{plant.extraGroupByKey[sel.dataset.plantExtraGroup]=sel.value;renderPlantilla();});
+  el("plantRelevanceTitle").onchange=e=>{const v=e.target.value.trim();plant.relevamientoLabel=v||"Campos de relevamiento";renderPlantilla();};
+  el("plantAddSection").onclick=()=>{const input=el("plantSectionName"),label=input.value.trim();if(!label){input.focus();return;}plant.customSections.push({id:"section_"+Date.now(),label});renderPlantilla();};
+  viewEl.querySelectorAll("[data-plant-section-remove]").forEach(b=>b.onclick=()=>{const id=b.dataset.plantSectionRemove;plant.customSections=plant.customSections.filter(s=>s.id!==id);Object.keys(plant.extraGroupByKey).forEach(k=>{if(plant.extraGroupByKey[k]===id)plant.extraGroupByKey[k]="relevamiento";});renderPlantilla();});
+  el("plantReset").onclick=()=>{plant.undoSnapshot={panelSelected:[...plant.panelSelected],panelOrder:[...plant.panelOrder],extraColumns:[...plant.extraColumns],custom:[...plant.custom],extraGroupByKey:{...plant.extraGroupByKey},customSections:[...plant.customSections],relevamientoLabel:plant.relevamientoLabel,orientation:plant.orientation};plant.panelSelected=[...PLANT_PANEL_COLUMNS];plant.panelOrder=[...PLANT_PANEL_COLUMNS];plant.extraColumns=[];plant.custom=[];plant.extraGroupByKey={};plant.customSections=[];plant.relevamientoLabel="Campos de relevamiento";plant.orientation="landscape";plantSyncColumns();renderPlantilla();};
+  if(el("plantUndoReset"))el("plantUndoReset").onclick=()=>{const old=plant.undoSnapshot;if(!old)return;plant.panelSelected=[...old.panelSelected];plant.panelOrder=[...(old.panelOrder||PLANT_PANEL_COLUMNS)];plant.extraColumns=[...old.extraColumns];plant.custom=[...old.custom];plant.extraGroupByKey={...old.extraGroupByKey};plant.customSections=[...old.customSections];plant.relevamientoLabel=old.relevamientoLabel||"Campos de relevamiento";plant.orientation=old.orientation||"landscape";plant.undoSnapshot=null;plantSyncColumns();renderPlantilla();};
+  el("plantOrientation").onchange=e=>{plant.orientation=e.target.value;plantWriteConfig();};
+  el("plantAddColumn").onclick=()=>{const label=el("plantNewColumn").value.trim();if(!label){el("plantNewColumn").focus();return;}const key="custom_"+Date.now();plant.custom.push({key,label});plant.extraColumns.push(key);plant.extraGroupByKey[key]="relevamiento";plantSyncColumns();renderPlantilla();};el("plantExport").onclick=exportPlantilla;
+}async function loadPlantStock(){if(el("plantUrl")){plant.url=el("plantUrl").value.trim();plant.token=el("plantToken").value.trim();plantWriteConfig();}plant.loading=true;plant.error="";renderPlantilla();try{const res=await plantFetch("json"),list=res.productos||[];if(!list.length)throw new Error("No se encontraron productos en esa fuente.");plant.productos=list;plant.familias=null;plant.zonas=null;}catch(e){plant.error=e.message||"No se pudo cargar el stock.";}finally{plant.loading=false;renderPlantilla();}}
+async function exportPlantilla(){if(typeof ExcelJS==="undefined"){alert("No se pudo cargar la librería de Excel. Revisá tu conexión a internet.");return;}const products=plantProducts();if(!products.length||!plant.columns.length)return;const wb=new ExcelJS.Workbook();wb.creator="Planificador";wb.created=new Date();const hs=plant.columns.map(k=>({key:k,label:plantLabel(k),width:k==="descripcion"?40:k==="obs"?28:Math.max(12,Math.min(24,plantLabel(k).length+3))})),ws=wb.addWorksheet("Relevamiento",{views:[{state:"frozen",ySplit:4}],pageSetup:{paperSize:9,orientation:plant.orientation,fitToPage:true,fitToWidth:1,fitToHeight:0}});ws.columns=hs.map(h=>({key:h.key,width:h.width}));
+  ws.mergeCells(1,1,1,hs.length);ws.getCell(1,1).value="RPM Construcciones - Planilla de Relevamiento";ws.getCell(1,1).font={bold:true,size:14};ws.mergeCells(2,1,2,hs.length);ws.getCell(2,1).value=`Generado desde el Planificador: ${new Date().toLocaleString("es-AR")} | ${products.length} productos`;ws.getRow(3).height=20;const groupFor=k=>PLANT_PANEL_COLUMNS.includes(k)?"PANEL":(plant.customSections.find(s=>s.id===(plant.extraGroupByKey[k]||"relevamiento"))?.label||plant.relevamientoLabel);let gi=0;while(gi<plant.columns.length){const group=groupFor(plant.columns[gi]);let gj=gi;while(gj+1<plant.columns.length&&groupFor(plant.columns[gj+1])===group)gj++;if(gj>gi)ws.mergeCells(3,gi+1,3,gj+1);const gc=ws.getCell(3,gi+1);gc.value=group;gc.font={bold:true,size:9,color:{argb:PLANT_PANEL_COLUMNS.includes(plant.columns[gi])?"FF405B48":"FF38536E"}};gc.fill={type:"pattern",pattern:"solid",fgColor:{argb:PLANT_PANEL_COLUMNS.includes(plant.columns[gi])?"FFE5EEE7":"FFDCE8F5"}};gc.alignment={vertical:"middle",horizontal:"center"};gi=gj+1;}const hr=ws.getRow(4);hs.forEach((h,i)=>{const c=hr.getCell(i+1);c.value=h.label;c.font={bold:true,color:{argb:"FFFFFFFF"}};c.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FF334155"}};c.alignment={vertical:"middle",horizontal:"center",wrapText:true};});hr.height=32;
+  products.forEach((p,n)=>{const v={};plant.columns.forEach(k=>v[k]=plantValue(p,k));const row=ws.addRow(v);row.height=30;row.eachCell((c,i)=>{c.fill={type:"pattern",pattern:"solid",fgColor:{argb:PLANT_PANEL_COLUMNS.includes(plant.columns[i-1])?"FFF4F8F5":"FFF2F6FB"}};c.alignment={vertical:"middle",wrapText:true};});});ws.autoFilter={from:{row:4,column:1},to:{row:4,column:hs.length}};const blob=new Blob([await wb.xlsx.writeBuffer()],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`Plantilla_Relevamiento_${Date.now()}.xlsx`;a.click();URL.revokeObjectURL(url);}
 /* ================= EXPORT / IMPORT ================= */
 el("exportBtn").onclick = ()=>{
   const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
@@ -2707,3 +2694,19 @@ requestAnimationFrame(()=> requestAnimationFrame(render));
 </script>
 </body>
 </html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
