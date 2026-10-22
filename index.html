@@ -325,6 +325,16 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 /* ================= STOCK Y ALERTAS ================= */
 .st-tabs{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
 .st-lbl{font-size:12px;color:var(--ink-soft);display:flex;align-items:center;gap:6px;}
+.rem-filter{min-width:175px;}
+.rem-folder{background:var(--surface);border:1px solid var(--line);border-radius:9px;margin:10px 0;overflow:hidden;box-shadow:var(--shadow);}
+.rem-folder summary{cursor:pointer;padding:13px 15px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:var(--line-soft);font-size:13px;}
+.rem-folder summary .rem-folder-meta{color:var(--ink-soft);font-size:12px;}
+.rem-folder table.data{border:0;border-radius:0;box-shadow:none;}
+.rem-actions{white-space:nowrap;text-align:right;}
+.rem-actions button{background:none;border:0;cursor:pointer;font-size:16px;padding:3px 6px;}
+.rem-actions .rem-delete{color:#d92d20;}
+.rem-actions .rem-edit{color:var(--accent);}
+.rem-editing input{width:100%;min-width:85px;box-sizing:border-box;}
 
 /* ================= VERSIÓN CELULAR ================= */
 @media (max-width:768px){
@@ -2364,7 +2374,7 @@ function altAceptar(a){
 setTimeout(()=>altRevisar(true), 4000);
 setInterval(()=>altRevisar(true), 10*60*1000);
 /* ================= STOCK Y REMITOS ================= */
-const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2};
+const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:""};
 const mk = s => String(s||"").trim().toLowerCase().replace(/\s+/g," ");
 function stState(){ state.remitos=state.remitos||[]; state.movs=state.movs||[]; state.conteos=state.conteos||[]; }
 function addDaysStr(ds,n){ return fmtDate(new Date(parseDate(ds).getTime()+n*DAY)); }
@@ -2428,6 +2438,7 @@ const tabs = [["conc","Conciliación"],["rem","Remitos"],["mov","Movimientos"],[
     ${sel?`<select id="stSt"><option value="">Todos los estados</option>${sel.map(([v,l])=>`<option value="${v}" ${stk.st===v?"selected":""}>${l}</option>`).join("")}</select>`:""}
     ${stk.tab==="conc"?`<label class="st-lbl" title="Los descuentos en el sistema pueden hacerse hasta N días después de la fecha del remito">Plazo de descuento (días) <input type="number" id="stTol" min="0" max="30" value="${stk.tol}" style="width:60px;"></label>`:""}
   </div>
+  ${stk.tab==="rem"?`<div class="filters" style="align-items:center;margin-top:-6px;"><label class="st-lbl">N° de remito <select class="rem-filter" id="remFilterNumero"><option value="">Todos los remitos</option></select></label><label class="st-lbl">Destino <select class="rem-filter" id="remFilterDestino"><option value="">Todos los destinos</option></select></label><label class="st-lbl">Fecha <select class="rem-filter" id="remFilterFecha"><option value="">Todas las fechas</option></select></label><button class="btn ghost small" id="remFilterClear">Limpiar filtros</button></div>`:""}
   <div id="stBody"></div>`;
 
   viewEl.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{ stk.tab=b.dataset.tab; stk.st=""; renderStock(); });
@@ -2436,6 +2447,10 @@ const tabs = [["conc","Conciliación"],["rem","Remitos"],["mov","Movimientos"],[
   el("stTo").onchange = e=>{ stk.to=e.target.value; drawStockBody(); };
   if(el("stSt")) el("stSt").onchange = e=>{ stk.st=e.target.value; drawStockBody(); };
   if(el("stTol")) el("stTol").oninput = e=>{ stk.tol=Math.max(0,parseInt(e.target.value)||0); drawStockBody(); };
+  if(el("remFilterNumero")) el("remFilterNumero").onchange=e=>{stk.remNumero=e.target.value;drawStockBody();};
+  if(el("remFilterDestino")) el("remFilterDestino").onchange=e=>{stk.remDestino=e.target.value;drawStockBody();};
+  if(el("remFilterFecha")) el("remFilterFecha").onchange=e=>{stk.remFecha=e.target.value;drawStockBody();};
+  if(el("remFilterClear")) el("remFilterClear").onclick=()=>{stk.remNumero=stk.remDestino=stk.remFecha="";stk.q="";stk.from=stk.to="";renderStock();};
 
   const fs = STF[stk.tab];
   if(fs){
@@ -2486,8 +2501,14 @@ function drawStockBody(){
     }
   }
   else if(stk.tab==="rem"){
-    const f = state.remitos.filter(r=>inRange(r.fecha)&&hit(r.numero,r.material,r.destino)).sort((a,b)=>a.fecha<b.fecha?1:-1);
-    html = tbl(["Remito","Fecha","Destino","Material","Cantidad",""], f.map(r=>`<tr><td class="mono">${escapeHtml(r.numero)}</td><td class="mono">${r.fecha}</td><td>${escapeHtml(r.destino||"—")}</td><td>${escapeHtml(r.material)}</td><td>${r.cant}</td><td>${rmBtn("remitos",r.id)}</td></tr>`).join(""));
+    const all=state.remitos;
+    const setOptions=(id,values,selected,placeholder)=>{const s=el(id);if(!s)return;const vals=[...new Set(values.filter(Boolean).map(String))].sort((a,b)=>a.localeCompare(b,"es",{numeric:true}));s.innerHTML=`<option value="">${placeholder}</option>`+vals.map(v=>`<option value="${escapeAttr(v)}" ${v===selected?"selected":""}>${escapeHtml(v)}</option>`).join("");};
+    setOptions("remFilterNumero",all.map(r=>r.numero),stk.remNumero,"Todos los remitos");
+    setOptions("remFilterDestino",all.map(r=>r.destino),stk.remDestino,"Todos los destinos");
+    setOptions("remFilterFecha",all.map(r=>r.fecha),stk.remFecha,"Todas las fechas");
+    const f=all.filter(r=>inRange(r.fecha)&&hit(r.numero,r.material,r.destino)&&(!stk.remNumero||String(r.numero)===stk.remNumero)&&(!stk.remDestino||String(r.destino||"")===stk.remDestino)&&(!stk.remFecha||r.fecha===stk.remFecha)).sort((a,b)=>a.fecha<b.fecha?1:a.fecha>b.fecha?-1:String(a.numero).localeCompare(String(b.numero),"es",{numeric:true}));
+    const groups=new Map();f.forEach(r=>{const key=String(r.numero||"(Sin número)");if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r);});
+    html=[...groups.entries()].map(([num,rows])=>{const first=rows[0];return `<details class="rem-folder" ${stk.remNumero?"open":""}><summary><b>Remito ${escapeHtml(num)}</b><span class="rem-folder-meta">${escapeHtml(first.fecha||"Sin fecha")} · ${escapeHtml(first.destino||"Sin destino")} · ${rows.length} producto(s)</span></summary>${tbl(["N° remito","Fecha","Destino","Material","Cantidad","Acciones"],rows.map(r=>{const editing=stk.remEdit===r.id;return editing?`<tr class="rem-editing" data-rem-row="${escapeAttr(r.id)}">${STF.rem.map(([k,,t])=>`<td><input data-rem-field="${k}" type="${t}" value="${escapeAttr(r[k]??"")}" ${t==="number"?'min="0" step="any"':""}></td>`).join("")}<td class="rem-actions"><button data-rem-save="${escapeAttr(r.id)}" title="Guardar">✓</button><button data-rem-cancel title="Cancelar">↩</button></td></tr>`:`<tr><td class="mono">${escapeHtml(r.numero||"—")}</td><td class="mono">${escapeHtml(r.fecha||"—")}</td><td>${escapeHtml(r.destino||"—")}</td><td>${escapeHtml(r.material||"—")}</td><td>${escapeHtml(r.cant)}</td><td class="rem-actions"><button class="rem-edit" data-rem-edit="${escapeAttr(r.id)}" title="Editar">✎</button><button class="rem-delete" data-c="remitos" data-id="${escapeAttr(r.id)}" title="Eliminar">×</button></td></tr>`;}).join(""))}</details>`;}).join("")||`<div class="ind-card" style="text-align:center;color:var(--ink-soft);">No hay remitos para esos filtros.</div>`;
   }
   else if(stk.tab==="mov"){
     const f = state.movs.filter(m=>inRange(m.fecha)&&hit(m.material,m.remito)&&(!stk.st||(stk.st==="con")===!!mk(m.remito))).sort((a,b)=>a.fecha<b.fecha?1:-1);
@@ -2503,6 +2524,9 @@ function drawStockBody(){
     state[b.dataset.c] = state[b.dataset.c].filter(x=>x.id!==b.dataset.id);
     save(); drawStockBody();
   });
+  body.querySelectorAll("[data-rem-edit]").forEach(b=>b.onclick=()=>{stk.remEdit=b.dataset.remEdit;drawStockBody();});
+  body.querySelectorAll("[data-rem-cancel]").forEach(b=>b.onclick=()=>{stk.remEdit="";drawStockBody();});
+  body.querySelectorAll("[data-rem-save]").forEach(b=>b.onclick=()=>{const r=state.remitos.find(x=>x.id===b.dataset.remSave),row=b.closest("tr");if(!r||!row)return;const d={};row.querySelectorAll("[data-rem-field]").forEach(x=>d[x.dataset.remField]=x.value.trim());if(["numero","fecha","material","cant"].some(k=>!d[k])){alert("Completá número, fecha, material y cantidad.");return;}r.numero=d.numero;r.fecha=d.fecha;r.destino=d.destino;r.material=d.material;r.cant=N(d.cant);stk.remEdit="";save();drawStockBody();});
 }
 /* ================= REMITOS vs EXCEL (por producto y fecha, sin N° de remito) ================= */
 const XL_STOP = new Set(["de","la","el","los","las","para","con","un","una","y","en","por","del","x"]);
