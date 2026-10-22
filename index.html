@@ -2374,8 +2374,9 @@ function altAceptar(a){
 setTimeout(()=>altRevisar(true), 4000);
 setInterval(()=>altRevisar(true), 10*60*1000);
 /* ================= STOCK Y REMITOS ================= */
-const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:""};
+const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:"", remSortBy:"fecha", remSortDir:"desc"};
 const mk = s => String(s||"").trim().toLowerCase().replace(/\s+/g," ");
+const stDisplayDate = s => {const m=String(s||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?`${m[3]}/${m[2]}/${m[1]}`:(s||"—");};
 function stState(){ state.remitos=state.remitos||[]; state.movs=state.movs||[]; state.conteos=state.conteos||[]; }
 function addDaysStr(ds,n){ return fmtDate(new Date(parseDate(ds).getTime()+n*DAY)); }
 const ST_BADGE = {ok:"completado", plazo:"en_curso", falta:"atrasado"};
@@ -2428,7 +2429,7 @@ function renderStock(){
   stState();
 const tabs = [["conc","Conciliación"],["rem","Remitos"],["mov","Movimientos"],["cont","Conteo físico"],["xl","Remitos vs Excel"]];
   const sel = STSEL[stk.tab];
-  viewEl.innerHTML = `<datalist id="stMats"></datalist>
+  viewEl.innerHTML = `<datalist id="stMats"></datalist><datalist id="stRemNumbers"></datalist><datalist id="stDestinos"></datalist>
   <div class="st-tabs">${tabs.map(([k,l])=>`<button class="btn ${stk.tab===k?"accent":"ghost"} small" data-tab="${k}">${l}</button>`).join("")}</div>
   <div id="stForm"></div>
   <div class="filters" style="align-items:center;">
@@ -2438,7 +2439,7 @@ const tabs = [["conc","Conciliación"],["rem","Remitos"],["mov","Movimientos"],[
     ${sel?`<select id="stSt"><option value="">Todos los estados</option>${sel.map(([v,l])=>`<option value="${v}" ${stk.st===v?"selected":""}>${l}</option>`).join("")}</select>`:""}
     ${stk.tab==="conc"?`<label class="st-lbl" title="Los descuentos en el sistema pueden hacerse hasta N días después de la fecha del remito">Plazo de descuento (días) <input type="number" id="stTol" min="0" max="30" value="${stk.tol}" style="width:60px;"></label>`:""}
   </div>
-  ${stk.tab==="rem"?`<div class="filters" style="align-items:center;margin-top:-6px;"><label class="st-lbl">N° de remito <select class="rem-filter" id="remFilterNumero"><option value="">Todos los remitos</option></select></label><label class="st-lbl">Destino <select class="rem-filter" id="remFilterDestino"><option value="">Todos los destinos</option></select></label><label class="st-lbl">Fecha <select class="rem-filter" id="remFilterFecha"><option value="">Todas las fechas</option></select></label><button class="btn ghost small" id="remFilterClear">Limpiar filtros</button></div>`:""}
+  ${stk.tab==="rem"?`<div class="filters" style="align-items:center;margin-top:-6px;"><label class="st-lbl">N° de remito <select class="rem-filter" id="remFilterNumero"><option value="">Todos los remitos</option></select></label><label class="st-lbl">Destino <select class="rem-filter" id="remFilterDestino"><option value="">Todos los destinos</option></select></label><label class="st-lbl">Fecha <select class="rem-filter" id="remFilterFecha"><option value="">Todas las fechas</option></select></label><label class="st-lbl">Ordenar por <select id="remSortBy"><option value="fecha" ${stk.remSortBy==="fecha"?"selected":""}>Fecha</option><option value="numero" ${stk.remSortBy==="numero"?"selected":""}>N° de remito</option></select></label><label class="st-lbl">Orden <select id="remSortDir"><option value="asc" ${stk.remSortDir==="asc"?"selected":""}>Menor a mayor</option><option value="desc" ${stk.remSortDir==="desc"?"selected":""}>Mayor a menor</option></select></label><button class="btn ghost small" id="remFilterClear">Limpiar filtros</button></div>`:""}
   <div id="stBody"></div>`;
 
   viewEl.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{ stk.tab=b.dataset.tab; stk.st=""; renderStock(); });
@@ -2451,13 +2452,15 @@ const tabs = [["conc","Conciliación"],["rem","Remitos"],["mov","Movimientos"],[
   if(el("remFilterDestino")) el("remFilterDestino").onchange=e=>{stk.remDestino=e.target.value;drawStockBody();};
   if(el("remFilterFecha")) el("remFilterFecha").onchange=e=>{stk.remFecha=e.target.value;drawStockBody();};
   if(el("remFilterClear")) el("remFilterClear").onclick=()=>{stk.remNumero=stk.remDestino=stk.remFecha="";stk.q="";stk.from=stk.to="";renderStock();};
+  if(el("remSortBy")) el("remSortBy").onchange=e=>{stk.remSortBy=e.target.value;drawStockBody();};
+  if(el("remSortDir")) el("remSortDir").onchange=e=>{stk.remSortDir=e.target.value;drawStockBody();};
 
   const fs = STF[stk.tab];
   if(fs){
     el("stForm").innerHTML = `<div class="ind-card" style="margin-bottom:12px;">
       <div class="ind-form" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));">${fs.map(([k,l,t,o])=>
         t==="select" ? `<div class="field"><label>${l}</label><select data-f="${k}">${o.map(x=>`<option>${x}</option>`).join("")}</select></div>`
-        : `<div class="field"><label>${l}</label><input data-f="${k}" type="${t}" ${t==="number"?'min="0" step="any" inputmode="decimal"':""} ${t==="date"?`value="${todayStr()}"`:""} ${k==="material"?'list="stMats"':""}></div>`).join("")}
+        : `<div class="field"><label>${l}</label><input data-f="${k}" type="${t}" ${t==="number"?'min="0" step="any" inputmode="decimal"':""} ${t==="date"?`value="${todayStr()}"`:""} ${k==="material"?'list="stMats"':k==="numero"?'list="stRemNumbers"':k==="destino"?'list="stDestinos"':''}></div>`).join("")}
       </div><button class="btn accent small" id="stAdd" style="align-self:flex-start;">+ Agregar</button></div>`;
     el("stAdd").onclick = ()=>{
       const d = {}; el("stForm").querySelectorAll("[data-f]").forEach(x=>d[x.dataset.f]=x.value.trim());
@@ -2479,6 +2482,10 @@ function drawStockBody(){
   stState();
   const mats = [...new Set([...state.remitos,...state.movs,...state.conteos].map(x=>(x.material||"").trim()).filter(Boolean))].sort();
   el("stMats").innerHTML = mats.map(m=>`<option value="${escapeAttr(m)}">`).join("");
+  const remNumbers=[...new Set(state.remitos.map(r=>String(r.numero||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"es",{numeric:true}));
+  const destinos=[...new Set(state.remitos.map(r=>String(r.destino||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"es"));
+  if(el("stRemNumbers"))el("stRemNumbers").innerHTML=remNumbers.map(v=>`<option value="${escapeAttr(v)}">`).join("");
+  if(el("stDestinos"))el("stDestinos").innerHTML=destinos.map(v=>`<option value="${escapeAttr(v)}">`).join("");
   const body = el("stBody"); let html = "";
   if(stk.tab==="xl"){ drawRemExcel(body); return; }
 
@@ -2505,10 +2512,10 @@ function drawStockBody(){
     const setOptions=(id,values,selected,placeholder)=>{const s=el(id);if(!s)return;const vals=[...new Set(values.filter(Boolean).map(String))].sort((a,b)=>a.localeCompare(b,"es",{numeric:true}));s.innerHTML=`<option value="">${placeholder}</option>`+vals.map(v=>`<option value="${escapeAttr(v)}" ${v===selected?"selected":""}>${escapeHtml(v)}</option>`).join("");};
     setOptions("remFilterNumero",all.map(r=>r.numero),stk.remNumero,"Todos los remitos");
     setOptions("remFilterDestino",all.map(r=>r.destino),stk.remDestino,"Todos los destinos");
-    setOptions("remFilterFecha",all.map(r=>r.fecha),stk.remFecha,"Todas las fechas");
-    const f=all.filter(r=>inRange(r.fecha)&&hit(r.numero,r.material,r.destino)&&(!stk.remNumero||String(r.numero)===stk.remNumero)&&(!stk.remDestino||String(r.destino||"")===stk.remDestino)&&(!stk.remFecha||r.fecha===stk.remFecha)).sort((a,b)=>a.fecha<b.fecha?1:a.fecha>b.fecha?-1:String(a.numero).localeCompare(String(b.numero),"es",{numeric:true}));
+    const sf=el("remFilterFecha");if(sf){const dates=[...new Set(all.map(r=>r.fecha).filter(Boolean))].sort();sf.innerHTML=`<option value="">Todas las fechas</option>`+dates.map(v=>`<option value="${escapeAttr(v)}" ${v===stk.remFecha?"selected":""}>${escapeHtml(stDisplayDate(v))}</option>`).join("");}
+    const f=all.filter(r=>inRange(r.fecha)&&hit(r.numero,r.material,r.destino)&&(!stk.remNumero||String(r.numero)===stk.remNumero)&&(!stk.remDestino||String(r.destino||"")===stk.remDestino)&&(!stk.remFecha||r.fecha===stk.remFecha)).sort((a,b)=>{const cmp=stk.remSortBy==="fecha"?String(a.fecha||"").localeCompare(String(b.fecha||"")):String(a.numero||"").localeCompare(String(b.numero||""),"es",{numeric:true});return cmp*(stk.remSortDir==="asc"?1:-1);});
     const groups=new Map();f.forEach(r=>{const key=String(r.numero||"(Sin número)");if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r);});
-    html=[...groups.entries()].map(([num,rows])=>{const first=rows[0];return `<details class="rem-folder" ${stk.remNumero?"open":""}><summary><b>Remito ${escapeHtml(num)}</b><span class="rem-folder-meta">${escapeHtml(first.fecha||"Sin fecha")} · ${escapeHtml(first.destino||"Sin destino")} · ${rows.length} producto(s)</span></summary>${tbl(["N° remito","Fecha","Destino","Material","Cantidad","Acciones"],rows.map(r=>{const editing=stk.remEdit===r.id;return editing?`<tr class="rem-editing" data-rem-row="${escapeAttr(r.id)}">${STF.rem.map(([k,,t])=>`<td><input data-rem-field="${k}" type="${t}" value="${escapeAttr(r[k]??"")}" ${t==="number"?'min="0" step="any"':""}></td>`).join("")}<td class="rem-actions"><button data-rem-save="${escapeAttr(r.id)}" title="Guardar">✓</button><button data-rem-cancel title="Cancelar">↩</button></td></tr>`:`<tr><td class="mono">${escapeHtml(r.numero||"—")}</td><td class="mono">${escapeHtml(r.fecha||"—")}</td><td>${escapeHtml(r.destino||"—")}</td><td>${escapeHtml(r.material||"—")}</td><td>${escapeHtml(r.cant)}</td><td class="rem-actions"><button class="rem-edit" data-rem-edit="${escapeAttr(r.id)}" title="Editar">✎</button><button class="rem-delete" data-c="remitos" data-id="${escapeAttr(r.id)}" title="Eliminar">×</button></td></tr>`;}).join(""))}</details>`;}).join("")||`<div class="ind-card" style="text-align:center;color:var(--ink-soft);">No hay remitos para esos filtros.</div>`;
+    html=[...groups.entries()].map(([num,rows])=>{const first=rows[0];return `<details class="rem-folder" ${stk.remNumero?"open":""}><summary><b>Remito ${escapeHtml(num)}</b><span class="rem-folder-meta">${escapeHtml(stDisplayDate(first.fecha))} · ${escapeHtml(first.destino||"Sin destino")} · ${rows.length} producto(s)</span></summary>${tbl(["N° remito","Fecha","Destino","Material","Cantidad","Acciones"],rows.map(r=>{const editing=stk.remEdit===r.id;return editing?`<tr class="rem-editing" data-rem-row="${escapeAttr(r.id)}">${STF.rem.map(([k,,t])=>`<td><input data-rem-field="${k}" type="${t}" value="${escapeAttr(r[k]??"")}" ${t==="number"?'min="0" step="any"':""}></td>`).join("")}<td class="rem-actions"><button data-rem-save="${escapeAttr(r.id)}" title="Guardar">✓</button><button data-rem-cancel title="Cancelar">↩</button></td></tr>`:`<tr><td class="mono">${escapeHtml(r.numero||"—")}</td><td class="mono">${escapeHtml(stDisplayDate(r.fecha))}</td><td>${escapeHtml(r.destino||"—")}</td><td>${escapeHtml(r.material||"—")}</td><td>${escapeHtml(r.cant)}</td><td class="rem-actions"><button class="rem-edit" data-rem-edit="${escapeAttr(r.id)}" title="Editar">✎</button><button class="rem-delete" data-c="remitos" data-id="${escapeAttr(r.id)}" title="Eliminar">×</button></td></tr>`;}).join(""))}</details>`;}).join("")||`<div class="ind-card" style="text-align:center;color:var(--ink-soft);">No hay remitos para esos filtros.</div>`;
   }
   else if(stk.tab==="mov"){
     const f = state.movs.filter(m=>inRange(m.fecha)&&hit(m.material,m.remito)&&(!stk.st||(stk.st==="con")===!!mk(m.remito))).sort((a,b)=>a.fecha<b.fecha?1:-1);
