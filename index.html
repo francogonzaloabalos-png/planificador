@@ -330,6 +330,14 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 .rem-folder summary{cursor:pointer;padding:13px 15px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:var(--line-soft);font-size:13px;}
 .rem-folder summary .rem-folder-meta{color:var(--ink-soft);font-size:12px;}
 .rem-folder table.data{border:0;border-radius:0;box-shadow:none;}
+.rem-folder table.data{table-layout:fixed;width:100%;}
+.rem-folder table.data th:nth-child(1),.rem-folder table.data td:nth-child(1){width:14%;}
+.rem-folder table.data th:nth-child(2),.rem-folder table.data td:nth-child(2){width:13%;}
+.rem-folder table.data th:nth-child(3),.rem-folder table.data td:nth-child(3){width:20%;}
+.rem-folder table.data th:nth-child(4),.rem-folder table.data td:nth-child(4){width:27%;}
+.rem-folder table.data th:nth-child(5),.rem-folder table.data td:nth-child(5){width:12%;}
+.rem-folder table.data th:nth-child(6),.rem-folder table.data td:nth-child(6){width:14%;}
+.rem-folder table.data td{overflow-wrap:anywhere;}
 .rem-folder table.data th:nth-child(5),.rem-folder table.data td:nth-child(5),
 .rem-folder table.data th:nth-child(6),.rem-folder table.data td:nth-child(6){text-align:center;}
 .rem-actions{white-space:nowrap;text-align:right;}
@@ -2730,7 +2738,6 @@ requestAnimationFrame(()=> requestAnimationFrame(render));
 </script>
 </body>
 </html>
-
 
 
 
