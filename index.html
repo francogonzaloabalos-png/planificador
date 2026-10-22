@@ -558,6 +558,7 @@ function fmtDate(d){ return d.toISOString().slice(0,10); }
 function parseDate(s){ const d=new Date(s+"T00:00:00"); return d; }
 function daysBetween(a,b){ return Math.round((b-a)/DAY); }
 function todayStr(){ const t=new Date(); t.setHours(0,0,0,0); return fmtDate(t); }
+function fa(s){ const m=String(s||"").match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? m[3]+"/"+m[2]+"/"+m[1] : (s||""); }
 function fmtLong(d){ return d.toLocaleDateString("es-AR",{day:"numeric",month:"long"}); }
 function mondayOf(d){ const wd=d.getDay(); const diff=(wd===0?-6:1-wd); return new Date(d.getTime()+diff*DAY); }
 function clamp(n,min,max){ return Math.max(min,Math.min(max,n)); }
@@ -1138,8 +1139,8 @@ function renderTable(){
         <td><span class="prio ${t.priority}" style="margin-right:6px;"></span>${escapeHtml(t.name)}${(t.dependsOn&&t.dependsOn.length)?` <span class="dep-tag">${t.dependsOn.length} dep.</span>`:""}</td>
         <td>${stage?escapeHtml(stage.name):""}</td>
         <td>${mem?escapeHtml(mem.name):"—"}</td>
-        <td class="mono">${t.start}</td>
-        <td class="mono">${t.end}</td>
+        <td class="mono">${fa(t.start)}</td>
+        <td class="mono">${fa(t.end)}</td>
         <td><span class="badge ${st}">${statusLabel(st)}</span></td>
         <td>${t.progress}%</td>
         <td>${cl.length?`${clDone}/${cl.length}`:"—"}</td>
