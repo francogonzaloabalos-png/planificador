@@ -351,6 +351,9 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 .xl-move-time{display:flex;flex-direction:column;gap:3px;min-width:86px;padding-right:9px;border-right:1px solid var(--line);}
 .xl-move-date{font-weight:650;white-space:nowrap;}
 .xl-move-hour{color:var(--ink-soft);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.xl-match-score{font-size:10px;line-height:1.2;color:var(--ink-soft);white-space:normal;}
+.xl-match-score strong{color:var(--ink);}
+.xl-best-match{font-size:9.5px;padding:2px 5px;line-height:1.2;white-space:nowrap;}
 .xl-move-info{min-width:0;line-height:1.45;}
 .xl-stock-detail{display:flex;gap:18px;flex-wrap:wrap;padding:8px 12px;background:var(--line-soft);border-bottom:1px solid var(--line);font-size:12px;line-height:1.5;}
 .xl-stock-detail b{color:var(--ink);}
@@ -2650,6 +2653,13 @@ function xlEntry(m){
     desc:m.descripcion||"", cant:N(m.cantidad), unidad:m.unidad||"", resp:m.responsable||"", obra:m.obra||"",
     pedido:m.id_pedido||"", envio:m.envio||"", zona:m.zona||""};
 }
+function xlMatchPercent(rem,e,materialScore){
+  let points=.6*Math.max(0,Math.min(1,materialScore)),weight=.6;
+  if(rem.fecha&&e.f){const days=Math.abs(daysBetween(parseDate(rem.fecha),parseDate(e.f)));points+=.25/(1+days*.35);weight+=.25;}
+  if(String(rem.destino||"").trim()&&String(e.obra||"").trim()){points+=.1*Math.max(0,Math.min(1,xlScore(rem.destino,"",xlTok(e.obra))));weight+=.1;}
+  const need=N(rem.cant),qty=N(e.cant);if(need>0&&qty>0){const ratio=qty/need;points+=.05*(ratio<=1?.7+.3*ratio:Math.max(0,.7/ratio));weight+=.05;}
+  return Math.round(100*points/weight);
+}
 const XL_TIPO = {ENTRADA:"completado", SALIDA:"en_curso"};
 
 async function xlCargar(){
@@ -2709,8 +2719,12 @@ function drawRemExcel(body){
     }
     const enLista = new Set(lista.map(c=>c.e.key));
     vinc.forEach(v=>{ if(!enLista.has(v.key)) lista.push({e:v, sc:1, gone:!!x.movs}); });   // guardados que ya no se ven en el Excel
+    lista=lista.map(c=>({...c,match:xlMatchPercent(r,c.e,c.sc)}));
+    const disponibles=lista.filter(c=>!(usadoPor[c.e.key]&&usadoPor[c.e.key]!==r.id));
+    const mejor=disponibles.reduce((best,c)=>!best||c.match>best.match?c:best,null);
     lista.sort((a,b)=>((a.e.f||"").localeCompare(b.e.f||""))||((a.e.h||"").localeCompare(b.e.h||"")));
-    lista = todos ? lista.slice(-30) : lista.slice(0,15);
+    const limite=todos?30:15;lista=todos?lista.slice(-limite):lista.slice(0,limite);
+    if(mejor&&!lista.some(c=>c.e.key===mejor.e.key)){if(lista.length>=limite)lista[lista.length-1]=mejor;else lista.push(mejor);lista.sort((a,b)=>((a.e.f||"").localeCompare(b.e.f||""))||((a.e.h||"").localeCompare(b.e.h||"")));}
 
     const sal = vinc.filter(v=>v.tipo==="SALIDA");
     const got = sal.reduce((s,v)=>s+N(v.cant),0), last = sal.map(v=>v.f).sort().pop();
@@ -2725,9 +2739,10 @@ function drawRemExcel(body){
 
     const items = lista.map(c=>{
       const e = c.e, otro = usadoPor[e.key] && usadoPor[e.key]!==r.id;
+      const esMejor=!!(mejor&&e.key===mejor.e.key);
       return `<label class="xl-movement" style="${otro?"opacity:.5;":""}">
         <input type="checkbox" class="xl-chk" data-r="${r.id}" data-k="${escapeAttr(e.key)}" ${keys.has(e.key)?"checked":""} ${otro?"disabled":""}>
-        <span class="xl-move-time"><span class="xl-move-date">${escapeHtml(stDisplayDate(e.f)||"s/fecha")}</span><span class="xl-move-hour">${escapeHtml(e.h||"Sin hora")}</span></span>
+        <span class="xl-move-time"><span class="xl-move-date">${escapeHtml(stDisplayDate(e.f)||"s/fecha")}</span><span class="xl-match-score" title="Puntaje orientativo: producto 60%, fecha 25%, destino/obra 10% y cantidad 5%. La cantidad pesa poco porque puede haber salidas parciales.">Coincidencia <strong>${c.match}%</strong></span>${esMejor?`<span class="badge completado xl-best-match">Mejor opción</span>`:""}<span class="xl-move-hour">${escapeHtml(e.h||"Sin hora")}</span></span>
         <span class="xl-move-info"><span class="badge ${XL_TIPO[e.tipo]||"pendiente"}">${escapeHtml(e.tipo)}</span> ${escapeHtml(e.fam)} · ${escapeHtml(e.desc)}${e.marca&&e.marca!=="No especificado"?" ("+escapeHtml(e.marca)+")":""} · <b>${e.cant} ${escapeHtml(e.unidad)}</b><br>
         <span style="color:var(--ink-soft);">Obra: ${escapeHtml(e.obra||"—")} · ${escapeHtml(e.resp||"—")} · ${escapeHtml(e.pedido)}${e.envio?" / "+escapeHtml(e.envio):""}${e.zona?" · "+escapeHtml(e.zona):""}
         ${c.sc<0.99&&!c.gone?` · parecido ${Math.round(c.sc*100)}%`:""}${c.gone?" · ⚠ ya no está en el Excel":""}${otro?" · usado en otra línea":""}</span></span></label>`;
