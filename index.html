@@ -2419,10 +2419,10 @@ function altAceptar(a){
 setTimeout(()=>altRevisar(true), 4000);
 setInterval(()=>altRevisar(true), 10*60*1000);
 /* ================= STOCK Y REMITOS ================= */
-const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:"", remSortBy:"fecha", remSortDir:"desc", remClosed:new Set(), concNumero:"", concDestino:"", concFecha:"", concSortBy:"fecha", concSortDir:"asc", contFecha:"", contSortDir:"desc", xlPane:"conc", xlRemNumero:"", xlRemFecha:"", xlRemDestino:"", xlRemSortBy:"fecha", xlRemSortDir:"desc"};
+const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:"", remSortBy:"fecha", remSortDir:"desc", remClosed:new Set(), concNumero:"", concDestino:"", concFecha:"", concSortBy:"fecha", concSortDir:"asc", contFecha:"", contSortDir:"desc", xlPane:"conc", xlRemNumero:"", xlRemFecha:"", xlRemDestino:"", xlRemSortBy:"fecha", xlRemSortDir:"desc", contProductQuery:"", contSelectedProduct:null, contDate:todayStr()};
 const mk = s => String(s||"").trim().toLowerCase().replace(/\s+/g," ");
 const stDisplayDate = s => s?fa(s):"—";
-function stState(){ state.remitos=state.remitos||[]; state.movs=state.movs||[]; state.conteos=state.conteos||[]; }
+function stState(){ state.remitos=state.remitos||[]; state.movs=state.movs||[]; state.conteos=state.conteos||[]; state.conteosExcel=state.conteosExcel||[]; }
 function addDaysStr(ds,n){ return fmtDate(new Date(parseDate(ds).getTime()+n*DAY)); }
 const ST_BADGE = {ok:"completado", plazo:"en_curso", falta:"atrasado"};
 
@@ -2581,9 +2581,10 @@ function drawStockBody(){
     html = tbl(["Fecha","Tipo","Material","Cantidad","N° remito",""], f.map(m=>`<tr><td class="mono">${escapeHtml(fa(m.fecha))}</td><td>${m.tipo}</td><td>${escapeHtml(m.material)}</td><td>${m.cant}</td><td>${escapeHtml(m.remito||"—")}</td><td>${rmBtn("movs",m.id)}</td></tr>`).join(""));
   }
   else {
-    const dates=[...new Set(state.conteos.map(c=>c.fecha).filter(Boolean))].sort();const sf=el("contFilterFecha");if(sf)sf.innerHTML=`<option value="">Todas las fechas</option>`+dates.map(d=>`<option value="${escapeAttr(d)}" ${d===stk.contFecha?"selected":""}>${escapeHtml(stDisplayDate(d))}</option>`).join("");
+    const dates=[...new Set([...state.conteos,...state.conteosExcel].map(c=>c.fecha).filter(Boolean))].sort();const sf=el("contFilterFecha");if(sf)sf.innerHTML=`<option value="">Todas las fechas</option>`+dates.map(d=>`<option value="${escapeAttr(d)}" ${d===stk.contFecha?"selected":""}>${escapeHtml(stDisplayDate(d))}</option>`).join("");
     const f = state.conteos.filter(c=>inRange(c.fecha)&&hit(c.material,c.nota)&&(!stk.st||(stk.st==="ok")===(c.fisico===c.sistema))&&(!stk.contFecha||c.fecha===stk.contFecha)).sort((a,b)=>String(a.fecha||"").localeCompare(String(b.fecha||""))*(stk.contSortDir==="asc"?1:-1));
     html = tbl(["Fecha","Material","Físico","Sistema","Diferencia","Estado","Observación",""], f.map(c=>{ const d=c.fisico-c.sistema; return `<tr><td class="mono">${escapeHtml(stDisplayDate(c.fecha))}</td><td>${escapeHtml(c.material)}</td><td>${c.fisico}</td><td>${c.sistema}</td><td style="color:${d?"var(--red)":"inherit"}">${d>0?"+":""}${d}</td><td><span class="badge ${d?"atrasado":"completado"}">${d?(d<0?"Faltante físico":"Sobrante físico"):"Coincide"}</span></td><td>${escapeHtml(c.nota||"")}</td><td>${rmBtn("conteos",c.id)}</td></tr>`; }).join(""));
+    html += drawConteoExcelSection();
   }
   body.innerHTML = html;
   body.querySelectorAll("details.rem-folder").forEach(d=>d.addEventListener("toggle",()=>{if(d.open)stk.remClosed.delete(d.dataset.remFolder);else stk.remClosed.add(d.dataset.remFolder);}));
@@ -2595,6 +2596,42 @@ function drawStockBody(){
   body.querySelectorAll("[data-rem-edit]").forEach(b=>b.onclick=()=>{stk.remEdit=b.dataset.remEdit;drawStockBody();});
   body.querySelectorAll("[data-rem-cancel]").forEach(b=>b.onclick=()=>{stk.remEdit="";drawStockBody();});
   body.querySelectorAll("[data-rem-save]").forEach(b=>b.onclick=()=>{const r=state.remitos.find(x=>x.id===b.dataset.remSave),row=b.closest("tr");if(!r||!row)return;const d={};row.querySelectorAll("[data-rem-field]").forEach(x=>d[x.dataset.remField]=x.value.trim());if(["numero","fecha","material","cant"].some(k=>!d[k])){alert("Completá número, fecha, material y cantidad.");return;}r.numero=d.numero;r.fecha=d.fecha;r.destino=d.destino;r.material=d.material;r.cant=N(d.cant);stk.remEdit="";save();drawStockBody();});
+  if(stk.tab==="cont") wireConteoExcelSection(body);
+}
+
+function drawConteoExcelSection(){
+  stState();
+  const x=stk.xl=stk.xl||{movs:null,prods:null,at:null,err:"",loading:false};
+  if(!x.movs&&!x.loading&&!x.auto&&altCfg().url){x.auto=true;xlCargar();}
+  const rows=state.conteosExcel.filter(c=>!stk.contFecha||c.fecha===stk.contFecha).sort((a,b)=>String(a.fecha||"").localeCompare(String(b.fecha||""))*(stk.contSortDir==="asc"?1:-1));
+  const selected=stk.contSelectedProduct;
+  const ubic=p=>[p.ubicacion_deposito,p.ubicacion_estante,p.ubicacion_columna,p.ubicacion_fila].filter(Boolean).join(" · ")||"—";
+  const selectForm=selected?`<div class="ind-card" style="margin-top:10px;"><h4 style="margin:0 0 8px;">Producto seleccionado: ${escapeHtml([selected.familia,selected.marca,selected.descripcion].filter(Boolean).join(" · "))}</h4><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;"><label class="field">Cantidad física contada<input id="contExcelFisico" type="number" min="0" step="any" inputmode="decimal" placeholder="Ingresá lo contado"></label><button class="btn accent small" id="contExcelAdd">Agregar al conteo</button><button class="btn ghost small" id="contExcelCancel">Cancelar</button></div><p style="font-size:12px;color:var(--ink-soft);margin:8px 0 0;">Sistema: ${escapeHtml(selected.stock_actual??"—")} ${escapeHtml(selected.unidad||"")} · Mínimo: ${escapeHtml(selected.stock_minimo??"—")} · Estado: ${escapeHtml(selected.estado||"—")} · Ubicación: ${escapeHtml(ubic(selected))}</p></div>`:"";
+  const table=rows.length?tbl(["Fecha del conteo","ID","Zona","Producto","Ubicación","Mínimo","Estado","Stock sistema","Físico","Diferencia","Estado del conteo","Observación"],rows.map(c=>{const d=N(c.fisico)-N(c.sistema);return `<tr><td class="mono">${escapeHtml(stDisplayDate(c.fecha))}</td><td>${escapeHtml(c.productId||"—")}</td><td>${escapeHtml(c.zona||"—")}</td><td>${escapeHtml([c.familia,c.marca,c.producto].filter(Boolean).join(" · "))}</td><td>${escapeHtml(c.ubicacion||"—")}</td><td>${escapeHtml(c.minimo??"—")}</td><td>${escapeHtml(c.estadoStock||"—")}</td><td>${escapeHtml(c.sistema)}</td><td><b>${escapeHtml(c.fisico)}</b></td><td style="color:${d?"var(--red)":"inherit"}">${d>0?"+":""}${d}</td><td><span class="badge ${d?"atrasado":"completado"}">${d?(d<0?"Faltante físico":"Sobrante físico"):"Coincide"}</span></td><td><input data-cont-excel-note="${escapeAttr(c.id)}" value="${escapeAttr(c.observacion||"")}" placeholder="Agregar observación" style="min-width:150px;"></td></tr>`;}).join("")):"<div class=\"ind-card\" style=\"color:var(--ink-soft);text-align:center;\">Todavía no hay productos agregados desde la consulta.</div>";
+  return `<section class="ind-card" id="contExcelSection" style="margin-top:18px;"><div style="padding:10px 12px;border-left:4px solid var(--accent);background:var(--surface-2,#f5f7fb);border-radius:6px;margin-bottom:12px;"><b>Fecha del conteo</b> <input id="contExcelDate" type="date" value="${escapeAttr(stk.contDate||todayStr())}" style="margin-left:8px;"><span style="margin-left:8px;color:var(--ink-soft);font-size:12px;">Esta fecha se guardará en los productos que agregues abajo.</span></div><h3 style="margin:0 0 4px;">Buscar producto en Excel para contar</h3><p style="margin:0 0 9px;font-size:12px;color:var(--ink-soft);">Elegí el producto del stock; después ingresá la cantidad física contada.</p><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><input id="contExcelSearch" value="${escapeAttr(stk.contProductQuery||"")}" placeholder="Ej: cinta aisladora, cable unipolar…" style="min-width:240px;flex:1;"><button id="contExcelLoad" class="btn ghost small">${x.loading?"Leyendo Excel…":x.movs?"Actualizar datos del Excel":"Cargar datos del Excel"}</button></div>${x.err?`<p style="color:var(--red);font-size:12px;">${escapeHtml(x.err)}</p>`:""}<div id="contExcelResults" style="margin-top:8px;">${conteoExcelResults()}</div>${selectForm}<h3 style="font-size:14px;margin:18px 0 8px;">Conteo cargado desde Excel</h3>${table}</section>`;
+}
+
+function conteoExcelResults(){
+  const q=(stk.contProductQuery||"").trim(),x=stk.xl||{};
+  if(!q)return `<p style="font-size:12px;color:var(--ink-soft);">Escribí el nombre del producto para ver las coincidencias del stock.</p>`;
+  if(!x.prods)return `<p style="font-size:12px;color:var(--ink-soft);">${x.loading?"Leyendo el Excel…":"Cargá los datos del Excel para buscar productos."}</p>`;
+  const matches=x.prods.map(p=>({p,score:xlScore(q,"",p.tk)})).filter(a=>a.score>=.67).sort((a,b)=>b.score-a.score).slice(0,30);
+  if(!matches.length)return `<p style="font-size:12px;color:var(--ink-soft);">No encontré productos parecidos. Probá con menos palabras.</p>`;
+  return tbl(["ID","Zona","Producto","Stock","Mínimo","Estado","Ubicación",""],matches.map(({p,score},i)=>`<tr><td>${escapeHtml(p.id??"—")}</td><td>${escapeHtml(p.zona||"—")}</td><td>${escapeHtml([p.familia,p.marca,p.descripcion].filter(Boolean).join(" · "))} ${score<.99?`<span class="badge pendiente">${Math.round(score*100)}%</span>`:""}</td><td>${escapeHtml(p.stock_actual??"—")} ${escapeHtml(p.unidad||"")}</td><td>${escapeHtml(p.stock_minimo??"—")}</td><td>${escapeHtml(p.estado||"—")}</td><td>${escapeHtml([p.ubicacion_deposito,p.ubicacion_estante,p.ubicacion_columna,p.ubicacion_fila].filter(Boolean).join(" · ")||"—")}</td><td><button class="btn accent small" data-cont-product="${i}">Seleccionar</button></td></tr>`).join(""));
+}
+
+function wireConteoExcelSection(body){
+  const date=body.querySelector("#contExcelDate");if(date)date.onchange=e=>{stk.contDate=e.target.value||todayStr();};
+  const search=body.querySelector("#contExcelSearch");if(search)search.oninput=e=>{stk.contProductQuery=e.target.value;const box=body.querySelector("#contExcelResults");if(box){box.innerHTML=conteoExcelResults();wireConteoExcelResults(body);}};
+  const load=body.querySelector("#contExcelLoad");if(load)load.onclick=()=>xlCargar();
+  wireConteoExcelResults(body);
+  const cancel=body.querySelector("#contExcelCancel");if(cancel)cancel.onclick=()=>{stk.contSelectedProduct=null;drawStockBody();};
+  const add=body.querySelector("#contExcelAdd");if(add)add.onclick=()=>{const p=stk.contSelectedProduct,inp=body.querySelector("#contExcelFisico");if(!p||!inp||inp.value===""){alert("Ingresá la cantidad física contada.");return;}const fisico=N(inp.value),sistema=N(p.stock_actual);state.conteosExcel.push({id:uid(),fecha:stk.contDate||todayStr(),productId:p.id,zona:p.zona||"",familia:p.familia||"",marca:p.marca||"",producto:p.descripcion||"",ubicacion:[p.ubicacion_deposito,p.ubicacion_estante,p.ubicacion_columna,p.ubicacion_fila].filter(Boolean).join(" · "),minimo:p.stock_minimo??"",estadoStock:p.estado||"",sistema,fisico,observacion:""});stk.contSelectedProduct=null;save();drawStockBody();};
+  body.querySelectorAll("[data-cont-excel-note]").forEach(inp=>inp.onchange=()=>{const c=state.conteosExcel.find(x=>x.id===inp.dataset.contExcelNote);if(c){c.observacion=inp.value;save();}});
+}
+function wireConteoExcelResults(body){
+  const matches=(stk.xl?.prods||[]).map(p=>({p,score:xlScore(stk.contProductQuery||"","",p.tk)})).filter(a=>a.score>=.67).sort((a,b)=>b.score-a.score).slice(0,30);
+  body.querySelectorAll("[data-cont-product]").forEach(b=>b.onclick=()=>{stk.contSelectedProduct=matches[Number(b.dataset.contProduct)]?.p||null;drawStockBody();});
 }
 /* ================= REMITOS vs EXCEL (por producto y fecha, sin N° de remito) ================= */
 const XL_STOP = new Set(["de","la","el","los","las","para","con","un","una","y","en","por","del","x"]);
@@ -2674,7 +2711,7 @@ async function xlCargar(){
     x.at = new Date();
   }catch(e){ x.err = "No se pudo leer el Excel: " + (e.message||e); }
   x.loading = false;
-  if(stk.tab==="xl") drawStockBody();
+  if(stk.tab==="xl"||stk.tab==="cont") drawStockBody();
 }
 
 function drawRemExcel(body){
@@ -2691,10 +2728,6 @@ function drawRemExcel(body){
   if(x.err) html += `<p style="color:var(--red);font-size:12.5px;">${escapeHtml(x.err)} (la URL se configura en la sección Alertas)</p>`;
   if(!x.movs) html += `<p style="font-size:12.5px;color:var(--ink-soft);">Cargá los remitos en la pestaña <b>Remitos</b> y tocá el botón: traigo del Excel todo lo del producto (entradas, salidas, obra, fecha y hora) cerca de la fecha del remito. Vos tildás cuáles corresponden y queda guardado acá.</p>`;
 
-  const busquedaHtml=`<div class="xl-pane ${stk.xlPane==="busqueda"?"is-active":""}" id="xlPaneBusqueda"><div class="ind-card"><h3>Buscar producto por nombre</h3>
-    <div class="field"><input id="xlProd" placeholder="Ej: cinta aisladora, cable unipolar, disyuntor..." value="${escapeAttr(stk.xlProd||"")}"></div>
-    <span style="font-size:12px;color:var(--ink-soft);">Muestra stock actual y movimientos del producto. Los filtros Desde / Hasta de arriba limitan los movimientos.</span>
-    <div id="xlRes"></div></div></div>`;
   const rems=state.remitos;
   const makeOpts=(vals,selected,empty,display=v=>v)=>`<option value="">${empty}</option>`+[...new Set(vals.filter(Boolean).map(String))].sort((a,b)=>a.localeCompare(b,"es",{numeric:true})).map(v=>`<option value="${escapeAttr(v)}" ${v===selected?"selected":""}>${escapeHtml(display(v))}</option>`).join("");
   const xlRemFilters=`<div class="filters" style="align-items:center;margin:10px 0 12px;"><label class="st-lbl">Remito <select id="xlRemNumero" class="rem-filter">${makeOpts(rems.map(r=>r.numero),stk.xlRemNumero,"Todos los remitos")}</select></label><label class="st-lbl">Fecha <select id="xlRemFecha" class="rem-filter">${makeOpts(rems.map(r=>r.fecha),stk.xlRemFecha,"Todas las fechas",fa)}</select></label><label class="st-lbl">Destino <select id="xlRemDestino" class="rem-filter">${makeOpts(rems.map(r=>r.destino),stk.xlRemDestino,"Todos los destinos")}</select></label><label class="st-lbl">Ordenar por <select id="xlRemSortBy"><option value="fecha" ${stk.xlRemSortBy==="fecha"?"selected":""}>Fecha</option><option value="numero" ${stk.xlRemSortBy==="numero"?"selected":""}>Remito</option></select></label><label class="st-lbl">Orden <select id="xlRemSortDir"><option value="desc" ${stk.xlRemSortDir==="desc"?"selected":""}>Mayor a menor</option><option value="asc" ${stk.xlRemSortDir==="asc"?"selected":""}>Menor a mayor</option></select></label><button class="btn ghost small" id="xlRemClear">Limpiar filtros</button></div>`;
@@ -2758,16 +2791,12 @@ function drawRemExcel(body){
   const remHeaders=["Remito","Fecha","Producto del remito","Cant.","Estado","Movimientos del Excel (tildá los que corresponden)"];
   const remTable=tbl(remHeaders,filas[stk.xlConcView].join("")||`<tr><td colspan="6" style="text-align:center;color:var(--ink-soft);padding:18px;">No hay líneas ${stk.xlConcView==="confirmadas"?"confirmadas":"pendientes de confirmar"} con estos filtros.</td></tr>`);
   const remTabs=`<div class="xl-mode-tabs" role="tablist" aria-label="Estado de conciliación"><button class="xl-mode-tab ${stk.xlConcView==="pendientes"?"is-active":""}" role="tab" aria-selected="${stk.xlConcView==="pendientes"}" data-xl-conc-view="pendientes"><b>Salidas a confirmar</b><small>${filas.pendientes.length} líneas pendientes o parciales</small></button><button class="xl-mode-tab ${stk.xlConcView==="confirmadas"?"is-active":""}" role="tab" aria-selected="${stk.xlConcView==="confirmadas"}" data-xl-conc-view="confirmadas"><b>Salidas confirmadas</b><small>${filas.confirmadas.length} líneas completas</small></button></div>`;
-  const conciliacionHtml=`<div class="xl-pane ${stk.xlPane==="conc"?"is-active":""}" id="xlPaneConciliacion"><div class="xl-primary-heading"><h2>Conciliar remitos con Movimientos</h2><p>Revisá las salidas sugeridas y tildá las que correspondan a cada línea del remito.</p></div>${xlRemFilters}${remTabs}${remTable}</div>`;
-  body.innerHTML = html + `<div class="xl-mode-tabs" role="tablist"><button class="xl-mode-tab ${stk.xlPane==="conc"?"is-active":""}" role="tab" aria-selected="${stk.xlPane==="conc"}" data-xl-pane="conc"><b>Conciliar remitos</b><small>Vincular líneas con movimientos</small></button><button class="xl-mode-tab ${stk.xlPane==="busqueda"?"is-active":""}" role="tab" aria-selected="${stk.xlPane==="busqueda"}" data-xl-pane="busqueda"><b>Consultar un producto en Excel</b><small>Stock actual y movimientos del producto</small></button></div><div class="xl-pane-stack">${conciliacionHtml}${busquedaHtml}</div>`;
-  const concTable=body.querySelector("#xlPaneConciliacion table.data");if(concTable)concTable.classList.add("xl-conciliation");
+  body.innerHTML = html + `<div class="xl-primary-heading"><h2>Conciliar remitos con Movimientos</h2><p>Revisá las salidas sugeridas y tildá las que correspondan a cada línea del remito.</p></div>${xlRemFilters}${remTabs}${remTable}`;
+  const concTable=body.querySelector("table.data");if(concTable)concTable.classList.add("xl-conciliation");
   body.querySelectorAll("[data-xl-conc-view]").forEach(b=>b.onclick=()=>{stk.xlConcView=b.dataset.xlConcView;drawRemExcel(body);});
   body.querySelector("#xlGo").onclick = xlCargar;
-  body.querySelectorAll("[data-xl-pane]").forEach(b=>b.onclick=()=>{stk.xlPane=b.dataset.xlPane;body.querySelectorAll("[data-xl-pane]").forEach(t=>{const active=t===b;t.classList.toggle("is-active",active);t.setAttribute("aria-selected",String(active));});body.querySelector("#xlPaneConciliacion").classList.toggle("is-active",stk.xlPane==="conc");body.querySelector("#xlPaneBusqueda").classList.toggle("is-active",stk.xlPane==="busqueda");});
   ["xlRemNumero","xlRemFecha","xlRemDestino","xlRemSortBy","xlRemSortDir"].forEach(id=>body.querySelector("#"+id).onchange=e=>{const k={xlRemNumero:"xlRemNumero",xlRemFecha:"xlRemFecha",xlRemDestino:"xlRemDestino",xlRemSortBy:"xlRemSortBy",xlRemSortDir:"xlRemSortDir"}[id];stk[k]=e.target.value;drawStockBody();});
   body.querySelector("#xlRemClear").onclick=()=>{stk.xlRemNumero=stk.xlRemFecha=stk.xlRemDestino="";drawStockBody();};
-  body.querySelector("#xlProd").oninput = e=>{ stk.xlProd = e.target.value; clearTimeout(stk.xlT); stk.xlT = setTimeout(xlDrawBusq, 180); };
-  xlDrawBusq();
   body.querySelector("#xlTol").oninput = e=>{ stk.tol = Math.max(0, parseInt(e.target.value)||0); drawRemExcel(body); };
   body.querySelector("#xlAnt").oninput = e=>{ stk.antes = Math.max(0, parseInt(e.target.value)||0); drawRemExcel(body); };
   body.querySelectorAll(".xl-all").forEach(b=>b.onclick = ()=>{ stk.xlAll[b.dataset.r] = !stk.xlAll[b.dataset.r]; drawRemExcel(body); });
