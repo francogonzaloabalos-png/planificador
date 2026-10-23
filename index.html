@@ -360,6 +360,16 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 .xl-stock-compare-card>div+div{margin-top:4px;}
 .xl-stock-compare-title{font-weight:650;margin-bottom:5px!important;}
 .xl-stock-status{display:inline-flex;align-items:center;gap:5px;font-weight:650;}
+.xl-search-panel{margin-top:18px;border:1px solid var(--line);border-radius:9px;background:var(--surface);overflow:hidden;box-shadow:var(--shadow);}
+.xl-search-panel>summary{cursor:pointer;list-style:none;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;font-weight:650;}
+.xl-search-panel>summary::-webkit-details-marker{display:none;}
+.xl-search-panel>summary::after{content:"＋";color:var(--ink-soft);margin-left:auto;}
+.xl-search-panel[open]>summary::after{content:"−";}
+.xl-search-panel>summary small{font-weight:400;color:var(--ink-soft);}
+.xl-search-panel .ind-card{border:0;border-top:1px solid var(--line);border-radius:0;box-shadow:none;margin:0!important;}
+.xl-primary-heading{margin:18px 0 8px;}
+.xl-primary-heading h2{font-size:16px;margin:0 0 4px;}
+.xl-primary-heading p{font-size:12.5px;color:var(--ink-soft);margin:0;}
 @media(max-width:768px){.xl-movement{gap:7px;padding:6px;}.xl-move-time{min-width:74px;padding-right:6px;}}
 
 /* ================= VERSIÓN CELULAR ================= */
@@ -631,8 +641,8 @@ function fmtDate(d){ return d.toISOString().slice(0,10); }
 function parseDate(s){ const d=new Date(s+"T00:00:00"); return d; }
 function daysBetween(a,b){ return Math.round((b-a)/DAY); }
 function todayStr(){ const t=new Date(); t.setHours(0,0,0,0); return fmtDate(t); }
-function fa(s){ const m=String(s||"").match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? m[3]+"/"+m[2]+"/"+m[1] : (s||""); }
-function fmtLong(d){ return d.toLocaleDateString("es-AR",{day:"numeric",month:"long"}); }
+function fa(s){ const v=String(s||"");let m=v.match(/^(\d{4})-(\d{2})-(\d{2})(.*)$/);if(m)return `${m[3]}/${m[2]}/${m[1]}${m[4]}`;m=v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(.*)$/);return m?`${m[1].padStart(2,"0")}/${m[2].padStart(2,"0")}/${m[3]}${m[4]}`:v; }
+function fmtLong(d){ return fa(fmtDate(d)); }
 function mondayOf(d){ const wd=d.getDay(); const diff=(wd===0?-6:1-wd); return new Date(d.getTime()+diff*DAY); }
 function clamp(n,min,max){ return Math.max(min,Math.min(max,n)); }
 function nowTime(){ return new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}); }
@@ -1345,7 +1355,7 @@ function renderLog(){
         const dayCls = wd===6 ? "sat" : (wd===0 ? "sun" : "");
         const val = state.weeklyLog[ds] || "";
         html += `<div class="log-day ${dayCls}">
-          <div class="log-day-label">${dayNamesEs[i]} ${d.getDate()}/${d.getMonth()+1}</div>
+          <div class="log-day-label">${dayNamesEs[i]} ${fa(fmtDate(d))}</div>
           <textarea class="log-day-text" data-date="${ds}" placeholder="Actividades importantes del día...">${escapeHtml(val)}</textarea>
         </div>`;
       }
@@ -1380,7 +1390,7 @@ function renderLog(){
       for(let i=0;i<6;i++){
         const d = new Date(monday.getTime() + i*DAY);
         const val = (state.weeklyLog[fmtDate(d)] || "").trim();
-        if(val) text += `${dayNamesEs[i]} ${d.getDate()}/${d.getMonth()+1}: ${val}\n`;
+        if(val) text += `${dayNamesEs[i]} ${fa(fmtDate(d))}: ${val}\n`;
       }
       const done = ()=>{ const old = btn.textContent; btn.textContent = "¡Copiado!"; setTimeout(()=>btn.textContent = old, 1500); };
       if(navigator.clipboard && navigator.clipboard.writeText){
@@ -1636,7 +1646,7 @@ async function exportExcel(){
       const deps = (t.dependsOn||[]).map(id=>{ const dt=state.tasks.find(x=>x.id===id); return dt?dt.name:""; }).filter(Boolean).join(", ");
       wsT.addRow({
         etapa: stage.name, tarea: t.name, resp: mem?mem.name:"—",
-        inicio: t.start, fin: t.end, estado: statusLabel(computeStatus(t)),
+        inicio: fa(t.start), fin: fa(t.end), estado: statusLabel(computeStatus(t)),
         prioridad: t.priority, avance: t.progress, deps, acept: t.acceptance||"", riesgos: t.risks||""
       });
     });
@@ -1732,7 +1742,7 @@ async function exportExcel(){
     for(let i=0;i<6;i++){
       const d = new Date(monday.getTime()+i*DAY);
       const ds = fmtDate(d);
-      wsB.addRow({semana: weekLabel, dia: dayNamesEs[i], fecha: ds, actividad: (state.weeklyLog&&state.weeklyLog[ds])||""});
+      wsB.addRow({semana: weekLabel, dia: dayNamesEs[i], fecha: fa(ds), actividad: (state.weeklyLog&&state.weeklyLog[ds])||""});
     }
   });
   styleHeader(wsB.getRow(1));
@@ -1762,7 +1772,7 @@ async function plantFetch(action){if(!plant.url.trim())throw new Error("Ingresá
 const PLANT_RELEVAMIENTO_COLUMNS=["relevado","ubic_encontradas","movido","obs"];
 function plantSyncColumns(){plant.columns=plant.panelOrder.filter(k=>plant.panelSelected.includes(k)).concat(plant.extraColumns);}
 function plantLabel(k){return PLANT_FIELDS.find(x=>x[0]===k)?.[1]||plant.custom.find(x=>x.key===k)?.label||k;}
-function plantValue(p,k){if(k==="ubicacion")return [p.ubicacion_deposito,p.ubicacion_estante,p.ubicacion_columna,p.ubicacion_fila].filter(v=>v!==undefined&&v!==null&&String(v).trim()!=="").join(" / ")||"—";if(k==="ult_fecha")return [p.ult_fecha,p.ult_hora].filter(Boolean).join(" ");if(["relevado","ubic_encontradas","movido","obs"].includes(k)||plant.custom.some(c=>c.key===k))return "";return p[k]??"";}
+function plantValue(p,k){if(k==="ubicacion")return [p.ubicacion_deposito,p.ubicacion_estante,p.ubicacion_columna,p.ubicacion_fila].filter(v=>v!==undefined&&v!==null&&String(v).trim()!=="").join(" / ")||"—";if(k==="ult_fecha")return [p.ult_fecha?fa(p.ult_fecha):"",p.ult_hora].filter(Boolean).join(" ");if(["relevado","ubic_encontradas","movido","obs"].includes(k)||plant.custom.some(c=>c.key===k))return "";return p[k]??"";}
 function plantProducts(){const fam=new Set(plant.familias||[]),zon=new Set(plant.zonas||[]),q=plant.search.trim().toLocaleLowerCase();return plant.productos.filter(p=>(!Array.isArray(plant.familias)||fam.has(String(p.familia||"")))&&(!Array.isArray(plant.zonas)||zon.has(String(p.zona||"")))&&(!q||[p.id,p.zona,p.familia,p.marca,p.descripcion].some(v=>String(v||"").toLocaleLowerCase().includes(q)))).sort((a,b)=>String(a.zona||"").localeCompare(String(b.zona||""),"es")||String(a.familia||"").localeCompare(String(b.familia||""),"es")||String(a.descripcion||"").localeCompare(String(b.descripcion||""),"es"));}
 function plantFilterOptions(key,selected){const vals=[...new Set(plant.productos.map(p=>String(p[key]||"")).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"es")),all=vals.length>0&&(!Array.isArray(selected)||selected.length===vals.length);return `<div class="plant-filter"><div class="plant-filter-head"><b>${key==="familia"?"Familias":"Zonas"}</b><button class="btn ghost small" data-plant-all="${key}">${all?"Quitar todas":"Seleccionar todas"}</button></div><div class="plant-checks">${vals.map(v=>`<label><input type="checkbox" data-plant-filter="${key}" value="${escapeAttr(v)}" ${!Array.isArray(selected)||selected.includes(v)?"checked":""}><span>${escapeHtml(v)}</span></label>`).join("")||`<span class="plant-muted">Cargá el stock para ver opciones.</span>`}</div></div>`;}
 function renderPlantilla(){
@@ -2008,7 +2018,7 @@ function drawRecent(card){
   const type = card.dataset.type, I = IND[type];
   const rows = state.indicators.filter(r=>r.type===type).sort((a,b)=>b.ts-a.ts).slice(0,5);
   card.querySelector(".ind-recent").innerHTML = rows.length
-    ? rows.map(r=>`<div class="ind-row"><span class="mono">${r.d.fecha}</span><span>${fmt(single(type,r.d),I.unit)}</span><button class="rm" data-id="${r.id}" title="Eliminar">&times;</button></div>`).join("")
+    ? rows.map(r=>`<div class="ind-row"><span class="mono">${fa(r.d.fecha)}</span><span>${fmt(single(type,r.d),I.unit)}</span><button class="rm" data-id="${r.id}" title="Eliminar">&times;</button></div>`).join("")
     : `<div class="ind-row" style="color:var(--grey)">Sin registros todavía</div>`;
   card.querySelectorAll(".rm").forEach(b=>b.onclick = ()=>{
     if(confirm("¿Eliminar este registro?")){
@@ -2072,7 +2082,7 @@ function renderIndicators(){
 const dash = {type:"adherencia", gran:"day", n:14};
 let chartInst = null;
 const bucket = (fecha,gran)=> gran==="week" ? fmtDate(mondayOf(parseDate(fecha))) : fecha;
-const lbl = k => { const d=parseDate(k); return (dash.gran==="week"?"Sem ":"") + d.getDate()+"/"+(d.getMonth()+1); };
+const lbl = k => { const d=parseDate(k); return (dash.gran==="week"?"Sem ":"") + String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+"/"+d.getFullYear(); };
 
 function series(type,gran,n){
   const g = {};
@@ -2295,7 +2305,7 @@ function altAnalizar(prods, movs){
     const g = dup[k]; if(g.length<2) return;
     const ids = [...new Set(g.map(x=>x.id_pedido))].join(", ");
     add("dup:"+k,"baja","Posible doble carga: "+g[0].descripcion,
-      `${g.length} filas iguales (${g[0].tipo} ${g[0].cantidad} ${g[0].unidad||""}, ${g[0].fecha}). Pedidos: ${ids}.`, null);
+      `${g.length} filas iguales (${g[0].tipo} ${g[0].cantidad} ${g[0].unidad||""}, ${fa(g[0].fecha)}). Pedidos: ${ids}.`, null);
   });
 
   /* 7) Remitos propios del planificador sin descontar a tiempo */
@@ -2400,9 +2410,9 @@ function altAceptar(a){
 setTimeout(()=>altRevisar(true), 4000);
 setInterval(()=>altRevisar(true), 10*60*1000);
 /* ================= STOCK Y REMITOS ================= */
-const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:"", remSortBy:"fecha", remSortDir:"desc", remClosed:new Set(), concNumero:"", concDestino:"", concFecha:"", concSortBy:"fecha", concSortDir:"asc", contFecha:"", contSortDir:"desc"};
+const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:"", remSortBy:"fecha", remSortDir:"desc", remClosed:new Set(), concNumero:"", concDestino:"", concFecha:"", concSortBy:"fecha", concSortDir:"asc", contFecha:"", contSortDir:"desc", xlSearchOpen:false};
 const mk = s => String(s||"").trim().toLowerCase().replace(/\s+/g," ");
-const stDisplayDate = s => {const m=String(s||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?`${m[3]}/${m[2]}/${m[1]}`:(s||"—");};
+const stDisplayDate = s => s?fa(s):"—";
 function stState(){ state.remitos=state.remitos||[]; state.movs=state.movs||[]; state.conteos=state.conteos||[]; }
 function addDaysStr(ds,n){ return fmtDate(new Date(parseDate(ds).getTime()+n*DAY)); }
 const ST_BADGE = {ok:"completado", plazo:"en_curso", falta:"atrasado"};
@@ -2538,12 +2548,12 @@ function drawStockBody(){
       <span class="badge atrasado">${c("falta")} vencidos / faltantes</span>
       <span class="badge pendiente">${orph.length} movimientos sin remito</span></div>`;
     html += tbl(["Remito","Fecha","Destino","Material","Remito","Descontado","Dif.","Fecha descuento","Estado"],
-      f.map(x=>`<tr><td class="mono">${escapeHtml(x.r.numero)}</td><td class="mono">${x.r.fecha}</td><td>${escapeHtml(x.r.destino||"—")}</td><td>${escapeHtml(x.r.material)}</td><td>${x.r.cant}</td><td>${x.got}</td><td style="color:${x.diff<0?"var(--red)":"inherit"}">${x.diff}</td><td class="mono">${x.last||"—"}</td><td><span class="badge ${ST_BADGE[x.st]}">${x.label}</span></td></tr>`).join(""));
+      f.map(x=>`<tr><td class="mono">${escapeHtml(x.r.numero)}</td><td class="mono">${escapeHtml(fa(x.r.fecha))}</td><td>${escapeHtml(x.r.destino||"—")}</td><td>${escapeHtml(x.r.material)}</td><td>${x.r.cant}</td><td>${x.got}</td><td style="color:${x.diff<0?"var(--red)":"inherit"}">${x.diff}</td><td class="mono">${escapeHtml(fa(x.last||"—"))}</td><td><span class="badge ${ST_BADGE[x.st]}">${x.label}</span></td></tr>`).join(""));
     if(!stk.st){
       const o = orph.filter(x=>inRange(x.m.fecha)&&hit(x.m.material,x.m.remito,x.m.nota));
       html += `<h3 style="margin:20px 0 8px;font-size:14px;">Salidas en el sistema sin remito que las respalde</h3>` +
         tbl(["Fecha","Material","Cantidad sin respaldo","N° remito cargado"],
-          o.map(x=>`<tr><td class="mono">${x.m.fecha}</td><td>${escapeHtml(x.m.material)}</td><td>${x.rem}</td><td>${escapeHtml(x.m.remito||"—")}</td></tr>`).join(""));
+          o.map(x=>`<tr><td class="mono">${escapeHtml(fa(x.m.fecha))}</td><td>${escapeHtml(x.m.material)}</td><td>${x.rem}</td><td>${escapeHtml(x.m.remito||"—")}</td></tr>`).join(""));
     }
   }
   else if(stk.tab==="rem"){
@@ -2559,7 +2569,7 @@ function drawStockBody(){
   }
   else if(stk.tab==="mov"){
     const f = state.movs.filter(m=>inRange(m.fecha)&&hit(m.material,m.remito)&&(!stk.st||(stk.st==="con")===!!mk(m.remito))).sort((a,b)=>a.fecha<b.fecha?1:-1);
-    html = tbl(["Fecha","Tipo","Material","Cantidad","N° remito",""], f.map(m=>`<tr><td class="mono">${m.fecha}</td><td>${m.tipo}</td><td>${escapeHtml(m.material)}</td><td>${m.cant}</td><td>${escapeHtml(m.remito||"—")}</td><td>${rmBtn("movs",m.id)}</td></tr>`).join(""));
+    html = tbl(["Fecha","Tipo","Material","Cantidad","N° remito",""], f.map(m=>`<tr><td class="mono">${escapeHtml(fa(m.fecha))}</td><td>${m.tipo}</td><td>${escapeHtml(m.material)}</td><td>${m.cant}</td><td>${escapeHtml(m.remito||"—")}</td><td>${rmBtn("movs",m.id)}</td></tr>`).join(""));
   }
   else {
     const dates=[...new Set(state.conteos.map(c=>c.fecha).filter(Boolean))].sort();const sf=el("contFilterFecha");if(sf)sf.innerHTML=`<option value="">Todas las fechas</option>`+dates.map(d=>`<option value="${escapeAttr(d)}" ${d===stk.contFecha?"selected":""}>${escapeHtml(stDisplayDate(d))}</option>`).join("");
@@ -2618,8 +2628,8 @@ function xlScore(nombre, txt, tk){
   return sum/a.length;
 }
 function xlFecha(s){
-  const m = String(s||"").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  return m ? `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}` : "";
+  const v=String(s||"").trim();let m=v.match(/^(\d{4})-(\d{2})-(\d{2})/);if(m)return `${m[1]}-${m[2]}-${m[3]}`;
+  m=v.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);return m?`${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`:"";
 }
 function xlFechaNormalizada(s){const v=String(s||"").trim(),es=xlFecha(v),iso=v.match(/^(\d{4})-(\d{2})-(\d{2})/);return es||(iso?`${iso[1]}-${iso[2]}-${iso[3]}`:"");}
 function xlHora(s){
@@ -2663,10 +2673,10 @@ function drawRemExcel(body){
   if(x.err) html += `<p style="color:var(--red);font-size:12.5px;">${escapeHtml(x.err)} (la URL se configura en la sección Alertas)</p>`;
   if(!x.movs) html += `<p style="font-size:12.5px;color:var(--ink-soft);">Cargá los remitos en la pestaña <b>Remitos</b> y tocá el botón: traigo del Excel todo lo del producto (entradas, salidas, obra, fecha y hora) cerca de la fecha del remito. Vos tildás cuáles corresponden y queda guardado acá.</p>`;
 
-  html += `<div class="ind-card" style="margin-bottom:12px;"><h3>Buscar un producto en el Excel</h3>
-    <div class="field"><input id="xlProd" placeholder="Ej: termicas, cable unipolar, disyuntor..." value="${escapeAttr(stk.xlProd||"")}"></div>
-    <span style="font-size:12px;color:var(--ink-soft);">Muestra entradas y salidas con fecha, hora y obra. Usa las fechas Desde / Hasta de arriba si las completás.</span>
-    <div id="xlRes"></div></div>`;
+  const busquedaHtml=`<details class="xl-search-panel" id="xlSearchPanel" ${stk.xlSearchOpen?"open":""}><summary><span>Consultar un producto en Excel</span><small>Stock actual, último movimiento y observaciones</small></summary><div class="ind-card"><h3>Buscar producto por nombre</h3>
+    <div class="field"><input id="xlProd" placeholder="Ej: cinta aisladora, cable unipolar, disyuntor..." value="${escapeAttr(stk.xlProd||"")}"></div>
+    <span style="font-size:12px;color:var(--ink-soft);">Muestra stock actual y movimientos del producto. Los filtros Desde / Hasta de arriba limitan los movimientos.</span>
+    <div id="xlRes"></div></div></details>`;
   const lineas = state.remitos.filter(r=>inRange(r.fecha)&&hit(r.numero,r.material,r.destino)).sort((a,b)=>a.fecha<b.fecha?1:-1);
   const usadoPor = {};
   state.remitos.forEach(r=>(r.vinc||[]).forEach(v=>{ usadoPor[v.key] = r.id; }));
@@ -2712,12 +2722,13 @@ function drawRemExcel(body){
         ${c.sc<0.99&&!c.gone?` · parecido ${Math.round(c.sc*100)}%`:""}${c.gone?" · ⚠ ya no está en el Excel":""}${otro?" · usado en otra línea":""}</span></span></label>`;
     }).join("") || (x.movs ? `<span style="color:var(--grey);font-size:12px;">Sin movimientos parecidos entre ${desde} y ${lim}</span>` : "");
     const verTodo = x.movs ? `<button class="btn ghost small xl-all" data-r="${r.id}" style="margin-top:4px;">${todos?"Volver a la ventana de fechas":"Ver todo el historial del producto"}</button>` : "";
-    return `<tr style="cursor:default;"><td class="mono">${escapeHtml(r.numero)}</td><td class="mono">${r.fecha}</td><td>${escapeHtml(r.material)}${r.destino?`<br><span style="font-size:11.5px;color:var(--ink-soft);">${escapeHtml(r.destino)}</span>`:""}</td><td>${r.cant}</td>
+    return `<tr style="cursor:default;"><td class="mono">${escapeHtml(r.numero)}</td><td class="mono">${escapeHtml(fa(r.fecha))}</td><td>${escapeHtml(r.material)}${r.destino?`<br><span style="font-size:11.5px;color:var(--ink-soft);">${escapeHtml(r.destino)}</span>`:""}</td><td>${r.cant}</td>
       <td><span class="badge ${ST_BADGE[st]}">${label}</span></td><td style="white-space:normal;min-width:380px;">${fuera?`<div style="font-size:12px;color:var(--amber);margin-bottom:5px;">Nada entre ${desde} y ${lim}. Lo más cercano de este producto:</div>`:""}${items}${verTodo}</td></tr>`;
   }).join("");
 
-  body.innerHTML = html + tbl(["Remito","Fecha","Producto del remito","Cant.","Estado","Movimientos del Excel (tildá los que corresponden)"], filas);
+  body.innerHTML = html + `<div class="xl-primary-heading"><h2>Conciliar remitos con Movimientos</h2><p>Revisá las salidas sugeridas y tildá las que correspondan a cada línea del remito.</p></div>` + tbl(["Remito","Fecha","Producto del remito","Cant.","Estado","Movimientos del Excel (tildá los que corresponden)"], filas) + busquedaHtml;
   body.querySelector("#xlGo").onclick = xlCargar;
+  body.querySelector("#xlSearchPanel").addEventListener("toggle",e=>{stk.xlSearchOpen=e.currentTarget.open;});
   body.querySelector("#xlProd").oninput = e=>{ stk.xlProd = e.target.value; clearTimeout(stk.xlT); stk.xlT = setTimeout(xlDrawBusq, 180); };
   xlDrawBusq();
   body.querySelector("#xlTol").oninput = e=>{ stk.tol = Math.max(0, parseInt(e.target.value)||0); drawRemExcel(body); };
@@ -2746,7 +2757,7 @@ function xlDrawBusq(){
     .sort((a,b)=>(Math.round(b.sc*10)-Math.round(a.sc*10)) || (((b.m.f||"")+(b.m.h||""))<((a.m.f||"")+(a.m.h||""))?-1:1));
   const filasP = ps.map(({p,sc})=>{
     const ub = [p.ubicacion_deposito, p.ubicacion_estante, p.ubicacion_columna, p.ubicacion_fila].filter(Boolean).join(" · ");
-    const ultFecha=stDisplayDate(p.ult_fecha),ultHora=String(p.ult_hora||"").trim(),ultObs=String(p.ult_obs||"").trim();
+    const ultFecha=stDisplayDate(xlFechaNormalizada(p.ult_fecha)||p.ult_fecha),ultHora=String(p.ult_hora||"").trim(),ultObs=String(p.ult_obs||"").trim();
     const tieneAcumulados=["entradas","salidas","devoluciones"].some(k=>p[k]!==undefined&&p[k]!==null&&p[k]!=="");
     const sameProduct=m=>[m.zona,m.familia,m.marca,m.descripcion].map(altNk).join("|")===[p.zona,p.familia,p.marca,p.descripcion].map(altNk).join("|");
     const ultMov=(x.movs||[]).filter(sameProduct).slice().sort((a,b)=>((a.f||"")+(a.h||"")).localeCompare((b.f||"")+(b.h||""))).pop();
@@ -2756,15 +2767,17 @@ function xlDrawBusq(){
     const tipoStock=String(p.ult_mov||"").trim().toUpperCase(),tipoMov=String(ultMov?.tipo||"").trim().toUpperCase();
     const coincide=comparable&&stockDia===movFecha&&stockHora===movHora&&(!tipoStock||tipoStock===tipoMov);
     const estado=coincide?`<span class="badge completado xl-stock-status">✓ Coincide</span>`:!ultMov?`<span class="badge pendiente xl-stock-status">Sin movimiento coincidente en Movimientos</span>`:!comparable?`<span class="badge pendiente xl-stock-status">No se pudo comparar fecha y hora</span>`:`<span class="badge atrasado xl-stock-status">✕ No coincide</span>`;
-    const obsItem=xlObs(ultMov,["observacion_item","observaciones_item","observacion_del_item","observaciones_del_item","obs_item","observacion_producto","observaciones_producto","obs_producto","observacion","observaciones","nota_item","nota","comentario_item"]);
+    const stockObsEnvio=xlObs(p,["ult_obs_envio","ult_observacion_envio","observaciones_envio","observacion_envio","obs_envio"]);
+    const obsItem=xlObs(ultMov,["observacion_item","observaciones_item","observacion_del_item","observaciones_del_item","obs_item","observacion_producto","observaciones_producto","obs_producto"]);
     const obsEnvio=xlObs(ultMov,["observacion_envio","observaciones_envio","observacion_del_envio","observaciones_del_envio","obs_envio","envio_observaciones","comentario_envio"]);
-    const detalle=`<div class="xl-stock-detail"><div class="xl-stock-detail-item"><b>Último movimiento en Stock:</b> ${escapeHtml(ultFecha||"—")}${ultHora?` <span style="margin-left:8px;border-left:1px solid var(--line);padding-left:8px;color:var(--ink-soft);">${escapeHtml(ultHora)}</span>`:""}<br><b>Observaciones de Stock:</b> ${escapeHtml(ultObs||"—")}</div>${tieneAcumulados?`<div class="xl-stock-detail-item"><b>Acumulado:</b> Entradas ${escapeHtml(p.entradas??"—")} · Salidas ${escapeHtml(p.salidas??"—")} · Devoluciones ${escapeHtml(p.devoluciones??"—")}</div>`:""}<div class="xl-stock-compare"><div class="xl-stock-compare-card"><div class="xl-stock-compare-title">Comparación con Movimientos ${estado}</div><div><b>Último registro:</b> ${ultMov?`${escapeHtml(stDisplayDate(movFecha))} · ${escapeHtml(movHora||"Sin hora")}${tipoMov?` · ${escapeHtml(tipoMov)}`:""}`:"No se encontró un movimiento del producto"}</div><div><b>Observación del ítem:</b> ${escapeHtml(obsItem)}</div><div><b>Observación del envío:</b> ${escapeHtml(obsEnvio)}</div></div></div></div>`;
+    const obsGeneral=xlObs(ultMov,["observaciones_generales","observacion_general","obs_general","observaciones","observacion","notas_generales","nota_general","comentario","nota"]);
+    const detalle=`<div class="xl-stock-detail"><div class="xl-stock-detail-item"><b>Último movimiento de Stock:</b> ${escapeHtml(ultFecha||"—")}${ultHora?` <span style="margin-left:8px;border-left:1px solid var(--line);padding-left:8px;color:var(--ink-soft);">${escapeHtml(ultHora)}</span>`:""}<br><b>Observaciones del último movimiento en Stock</b><br><b>Última observación del ítem:</b> ${escapeHtml(ultObs||"—")}<br><b>Observación del envío:</b> ${escapeHtml(stockObsEnvio)}</div>${tieneAcumulados?`<div class="xl-stock-detail-item"><b>Acumulado:</b> Entradas ${escapeHtml(p.entradas??"—")} · Salidas ${escapeHtml(p.salidas??"—")} · Devoluciones ${escapeHtml(p.devoluciones??"—")}</div>`:""}<div class="xl-stock-compare"><div class="xl-stock-compare-card"><div class="xl-stock-compare-title">Comparación con la hoja Movimientos ${estado}</div><div><b>Último registro:</b> ${ultMov?`${escapeHtml(stDisplayDate(movFecha))} · ${escapeHtml(movHora||"Sin hora")}${tipoMov?` · ${escapeHtml(tipoMov)}`:""}`:"No se encontró un movimiento del producto"}</div><div style="font-weight:650;margin-top:7px;">Observaciones de la hoja Movimientos</div><div><b>Observación del ítem:</b> ${escapeHtml(obsItem)}</div><div><b>Observación del envío:</b> ${escapeHtml(obsEnvio)}</div><div><b>Observaciones generales:</b> ${escapeHtml(obsGeneral)}</div></div></div></div>`;
     return `<tr style="cursor:default;"><td class="mono">${escapeHtml(p.id)}</td><td>${escapeHtml(p.zona)}</td>
       <td>${escapeHtml(p.familia)} · ${escapeHtml(p.marca)} · ${escapeHtml(p.descripcion)} ${pct(sc)}</td>
       <td><b>${p.stock_actual}</b> ${escapeHtml(p.unidad||"")}</td><td>${p.stock_minimo}</td>
       <td><span class="badge ${p.estado==="REPONER"?"atrasado":"completado"}">${escapeHtml(p.estado)}</span></td><td>${escapeHtml(ub||"—")}</td></tr><tr style="cursor:default;"><td colspan="7" style="padding:0;">${detalle}</td></tr>`;
   }).join("");
-  const filasM = ms.slice(0,100).map(({m,sc})=>`<tr style="cursor:default;"><td class="mono">${m.f||"s/fecha"}</td><td class="mono">${m.h||""}</td>
+  const filasM = ms.slice(0,100).map(({m,sc})=>`<tr style="cursor:default;"><td class="mono">${escapeHtml(fa(m.f)||"s/fecha")}</td><td class="mono">${escapeHtml(m.h||"")}</td>
     <td><span class="badge ${XL_TIPO[String(m.tipo).toUpperCase()]||"pendiente"}">${escapeHtml(m.tipo)}</span></td>
     <td>${escapeHtml(m.familia)} · ${escapeHtml(m.marca)} · ${escapeHtml(m.descripcion)} ${pct(sc)}</td><td>${m.cantidad} ${escapeHtml(m.unidad||"")}</td>
     <td>${escapeHtml(m.obra||"—")}</td><td>${escapeHtml(m.responsable||"—")}</td><td>${escapeHtml(m.id_pedido||"")}${m.envio?" / "+escapeHtml(m.envio):""}</td></tr>`).join("");
