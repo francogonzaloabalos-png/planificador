@@ -2713,7 +2713,7 @@ function drawStockBody(){
   }
   body.innerHTML = html;
   body.querySelectorAll("details.rem-folder").forEach(d=>d.addEventListener("toggle",()=>{if(d.open)stk.remClosed.delete(d.dataset.remFolder);else stk.remClosed.add(d.dataset.remFolder);}));
-  body.querySelectorAll(".rm").forEach(b=>b.onclick=()=>{
+    body.querySelectorAll(".rm,.rem-delete[data-c]").forEach(b=>b.onclick=()=>{
     if(!confirm("¿Eliminar este registro?")) return;
     state[b.dataset.c] = state[b.dataset.c].filter(x=>x.id!==b.dataset.id);
     if(b.dataset.c==="remitos"){const usadas=new Set(state.remitos.map(r=>r.imagenId).filter(Boolean));state.remitoImagenes=(state.remitoImagenes||[]).filter(i=>usadas.has(i.id));}
