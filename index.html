@@ -2414,7 +2414,7 @@ function altAceptar(a){
 setTimeout(()=>altRevisar(true), 4000);
 setInterval(()=>altRevisar(true), 10*60*1000);
 /* ================= STOCK Y REMITOS ================= */
-const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:"", remSortBy:"fecha", remSortDir:"desc", remClosed:new Set(), concNumero:"", concDestino:"", concFecha:"", concSortBy:"fecha", concSortDir:"asc", contFecha:"", contSortDir:"desc", xlPane:"conc"};
+const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:"", remSortBy:"fecha", remSortDir:"desc", remClosed:new Set(), concNumero:"", concDestino:"", concFecha:"", concSortBy:"fecha", concSortDir:"asc", contFecha:"", contSortDir:"desc", xlPane:"conc", xlRemNumero:"", xlRemFecha:"", xlRemDestino:"", xlRemSortBy:"fecha", xlRemSortDir:"desc"};
 const mk = s => String(s||"").trim().toLowerCase().replace(/\s+/g," ");
 const stDisplayDate = s => s?fa(s):"—";
 function stState(){ state.remitos=state.remitos||[]; state.movs=state.movs||[]; state.conteos=state.conteos||[]; }
@@ -2640,7 +2640,9 @@ function xlHora(s){
   const m = String(s||"").match(/(\d{1,2}):(\d{2})/);
   return m ? m[1].padStart(2,"0")+":"+m[2] : "";
 }
-function xlObs(m,keys){const vals=[...new Set(keys.map(k=>String(m?.[k]??"").trim()).filter(Boolean))];return vals.join(" · ")||"—";}
+function xlObs(m,keys){const vals=keys.map(k=>String(m?.[k]??"").trim()).filter(Boolean);return [...new Set(vals)].join(" · ")||"—";}
+function xlObsTagged(obj,tags,exclude=[]){const norm=s=>String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]/g,"");const vals=Object.entries(obj||{}).filter(([k])=>{const n=norm(k);return (n.includes("obs")||n.includes("observ"))&&tags.some(t=>n.includes(norm(t)))&&!exclude.some(t=>n.includes(norm(t)));}).map(([,v])=>String(v??"").trim()).filter(Boolean);return [...new Set(vals)].join(" · ")||"—";}
+function xlObsMerge(...vals){const all=vals.flatMap(v=>String(v||"").split(" · ")).map(v=>v.trim()).filter(v=>v&&v!=="—");return [...new Set(all)].join(" · ")||"—";}
 function xlEntry(m){
   return {key:m.key, f:m.f, h:m.h, tipo:String(m.tipo||"").toUpperCase(), fam:m.familia||"", marca:m.marca||"",
     desc:m.descripcion||"", cant:N(m.cantidad), unidad:m.unidad||"", resp:m.responsable||"", obra:m.obra||"",
@@ -2681,7 +2683,10 @@ function drawRemExcel(body){
     <div class="field"><input id="xlProd" placeholder="Ej: cinta aisladora, cable unipolar, disyuntor..." value="${escapeAttr(stk.xlProd||"")}"></div>
     <span style="font-size:12px;color:var(--ink-soft);">Muestra stock actual y movimientos del producto. Los filtros Desde / Hasta de arriba limitan los movimientos.</span>
     <div id="xlRes"></div></div></div>`;
-  const lineas = state.remitos.filter(r=>inRange(r.fecha)&&hit(r.numero,r.material,r.destino)).sort((a,b)=>a.fecha<b.fecha?1:-1);
+  const rems=state.remitos;
+  const makeOpts=(vals,selected,empty,display=v=>v)=>`<option value="">${empty}</option>`+[...new Set(vals.filter(Boolean).map(String))].sort((a,b)=>a.localeCompare(b,"es",{numeric:true})).map(v=>`<option value="${escapeAttr(v)}" ${v===selected?"selected":""}>${escapeHtml(display(v))}</option>`).join("");
+  const xlRemFilters=`<div class="filters" style="align-items:center;margin:10px 0 12px;"><label class="st-lbl">Remito <select id="xlRemNumero" class="rem-filter">${makeOpts(rems.map(r=>r.numero),stk.xlRemNumero,"Todos los remitos")}</select></label><label class="st-lbl">Fecha <select id="xlRemFecha" class="rem-filter">${makeOpts(rems.map(r=>r.fecha),stk.xlRemFecha,"Todas las fechas",fa)}</select></label><label class="st-lbl">Destino <select id="xlRemDestino" class="rem-filter">${makeOpts(rems.map(r=>r.destino),stk.xlRemDestino,"Todos los destinos")}</select></label><label class="st-lbl">Ordenar por <select id="xlRemSortBy"><option value="fecha" ${stk.xlRemSortBy==="fecha"?"selected":""}>Fecha</option><option value="numero" ${stk.xlRemSortBy==="numero"?"selected":""}>Remito</option></select></label><label class="st-lbl">Orden <select id="xlRemSortDir"><option value="desc" ${stk.xlRemSortDir==="desc"?"selected":""}>Mayor a menor</option><option value="asc" ${stk.xlRemSortDir==="asc"?"selected":""}>Menor a mayor</option></select></label><button class="btn ghost small" id="xlRemClear">Limpiar filtros</button></div>`;
+  const lineas = rems.filter(r=>inRange(r.fecha)&&hit(r.numero,r.material,r.destino)&&(!stk.xlRemNumero||String(r.numero)===stk.xlRemNumero)&&(!stk.xlRemFecha||r.fecha===stk.xlRemFecha)&&(!stk.xlRemDestino||String(r.destino||"")===stk.xlRemDestino)).sort((a,b)=>{const cmp=stk.xlRemSortBy==="fecha"?String(a.fecha||"").localeCompare(String(b.fecha||"")):String(a.numero||"").localeCompare(String(b.numero||""),"es",{numeric:true});return cmp*(stk.xlRemSortDir==="asc"?1:-1);});
   const usadoPor = {};
   state.remitos.forEach(r=>(r.vinc||[]).forEach(v=>{ usadoPor[v.key] = r.id; }));
 
@@ -2730,10 +2735,12 @@ function drawRemExcel(body){
       <td><span class="badge ${ST_BADGE[st]}">${label}</span></td><td style="white-space:normal;min-width:380px;">${fuera?`<div style="font-size:12px;color:var(--amber);margin-bottom:5px;">Nada entre ${desde} y ${lim}. Lo más cercano de este producto:</div>`:""}${items}${verTodo}</td></tr>`;
   }).join("");
 
-  const conciliacionHtml=`<div class="xl-pane ${stk.xlPane==="conc"?"is-active":""}" id="xlPaneConciliacion"><div class="xl-primary-heading"><h2>Conciliar remitos con Movimientos</h2><p>Revisá las salidas sugeridas y tildá las que correspondan a cada línea del remito.</p></div>${tbl(["Remito","Fecha","Producto del remito","Cant.","Estado","Movimientos del Excel (tildá los que corresponden)"], filas)}</div>`;
+  const conciliacionHtml=`<div class="xl-pane ${stk.xlPane==="conc"?"is-active":""}" id="xlPaneConciliacion"><div class="xl-primary-heading"><h2>Conciliar remitos con Movimientos</h2><p>Revisá las salidas sugeridas y tildá las que correspondan a cada línea del remito.</p></div>${xlRemFilters}${tbl(["Remito","Fecha","Producto del remito","Cant.","Estado","Movimientos del Excel (tildá los que corresponden)"], filas)}</div>`;
   body.innerHTML = html + `<div class="xl-mode-tabs" role="tablist"><button class="xl-mode-tab ${stk.xlPane==="conc"?"is-active":""}" role="tab" aria-selected="${stk.xlPane==="conc"}" data-xl-pane="conc"><b>Conciliar remitos</b><small>Vincular líneas con movimientos</small></button><button class="xl-mode-tab ${stk.xlPane==="busqueda"?"is-active":""}" role="tab" aria-selected="${stk.xlPane==="busqueda"}" data-xl-pane="busqueda"><b>Consultar un producto en Excel</b><small>Stock actual y movimientos del producto</small></button></div><div class="xl-pane-stack">${conciliacionHtml}${busquedaHtml}</div>`;
   body.querySelector("#xlGo").onclick = xlCargar;
   body.querySelectorAll("[data-xl-pane]").forEach(b=>b.onclick=()=>{stk.xlPane=b.dataset.xlPane;body.querySelectorAll("[data-xl-pane]").forEach(t=>{const active=t===b;t.classList.toggle("is-active",active);t.setAttribute("aria-selected",String(active));});body.querySelector("#xlPaneConciliacion").classList.toggle("is-active",stk.xlPane==="conc");body.querySelector("#xlPaneBusqueda").classList.toggle("is-active",stk.xlPane==="busqueda");});
+  ["xlRemNumero","xlRemFecha","xlRemDestino","xlRemSortBy","xlRemSortDir"].forEach(id=>body.querySelector("#"+id).onchange=e=>{const k={xlRemNumero:"xlRemNumero",xlRemFecha:"xlRemFecha",xlRemDestino:"xlRemDestino",xlRemSortBy:"xlRemSortBy",xlRemSortDir:"xlRemSortDir"}[id];stk[k]=e.target.value;drawStockBody();});
+  body.querySelector("#xlRemClear").onclick=()=>{stk.xlRemNumero=stk.xlRemFecha=stk.xlRemDestino="";drawStockBody();};
   body.querySelector("#xlProd").oninput = e=>{ stk.xlProd = e.target.value; clearTimeout(stk.xlT); stk.xlT = setTimeout(xlDrawBusq, 180); };
   xlDrawBusq();
   body.querySelector("#xlTol").oninput = e=>{ stk.tol = Math.max(0, parseInt(e.target.value)||0); drawRemExcel(body); };
@@ -2772,10 +2779,10 @@ function xlDrawBusq(){
     const tipoStock=String(p.ult_mov||"").trim().toUpperCase(),tipoMov=String(ultMov?.tipo||"").trim().toUpperCase();
     const coincide=comparable&&stockDia===movFecha&&stockHora===movHora&&(!tipoStock||tipoStock===tipoMov);
     const estado=coincide?`<span class="badge completado xl-stock-status">✓ Coincide</span>`:!ultMov?`<span class="badge pendiente xl-stock-status">Sin movimiento coincidente en Movimientos</span>`:!comparable?`<span class="badge pendiente xl-stock-status">No se pudo comparar fecha y hora</span>`:`<span class="badge atrasado xl-stock-status">✕ No coincide</span>`;
-    const stockObsEnvio=xlObs(p,["ult_obs_envio","ult_observacion_envio","observaciones_envio","observacion_envio","obs_envio"]);
-    const obsItem=xlObs(ultMov,["observacion_item","observaciones_item","observacion_del_item","observaciones_del_item","obs_item","observacion_producto","observaciones_producto","obs_producto"]);
-    const obsEnvio=xlObs(ultMov,["observacion_envio","observaciones_envio","observacion_del_envio","observaciones_del_envio","obs_envio","envio_observaciones","comentario_envio"]);
-    const obsGeneral=xlObs(ultMov,["observaciones_generales","observacion_general","obs_general","observaciones","observacion","notas_generales","nota_general","comentario","nota"]);
+    const stockObsEnvio=xlObsMerge(xlObs(p,["ult_obs_envio","ult_observacion_envio","observaciones_envio","observacion_envio","obs_envio"]),xlObsTagged(p,["envio"],["item","general"]));
+    const obsItem=xlObsMerge(xlObs(ultMov,["observacion_item","observaciones_item","observacion_del_item","observaciones_del_item","obs_item","observacion_producto","observaciones_producto","obs_producto"]),xlObsTagged(ultMov,["item","producto"],["envio","general"]));
+    const obsEnvio=xlObsMerge(xlObs(ultMov,["observacion_envio","observaciones_envio","observacion_del_envio","observaciones_del_envio","obs_envio","envio_observaciones","comentario_envio"]),xlObsTagged(ultMov,["envio"],["item","general"]));
+    const obsGeneral=xlObsMerge(xlObs(ultMov,["observaciones_generales","observacion_general","obs_general","observaciones","observacion","notas_generales","nota_general","comentario","nota"]),xlObsTagged(ultMov,["general"],["item","envio"]));
     const detalle=`<div class="xl-stock-detail"><div class="xl-stock-detail-item"><b>Último movimiento de Stock:</b> ${escapeHtml(ultFecha||"—")}${ultHora?` <span style="margin-left:8px;border-left:1px solid var(--line);padding-left:8px;color:var(--ink-soft);">${escapeHtml(ultHora)}</span>`:""}<br><b>Observaciones del último movimiento en Stock</b><br><b>Última observación del ítem:</b> ${escapeHtml(ultObs||"—")}<br><b>Observación del envío:</b> ${escapeHtml(stockObsEnvio)}</div>${tieneAcumulados?`<div class="xl-stock-detail-item"><b>Acumulado:</b> Entradas ${escapeHtml(p.entradas??"—")} · Salidas ${escapeHtml(p.salidas??"—")} · Devoluciones ${escapeHtml(p.devoluciones??"—")}</div>`:""}<div class="xl-stock-compare"><div class="xl-stock-compare-card"><div class="xl-stock-compare-title">Comparación con la hoja Movimientos ${estado}</div><div><b>Último registro:</b> ${ultMov?`${escapeHtml(stDisplayDate(movFecha))} · ${escapeHtml(movHora||"Sin hora")}${tipoMov?` · ${escapeHtml(tipoMov)}`:""}`:"No se encontró un movimiento del producto"}</div><div style="font-weight:650;margin-top:7px;">Observaciones de la hoja Movimientos</div><div><b>Observación del ítem:</b> ${escapeHtml(obsItem)}</div><div><b>Observación del envío:</b> ${escapeHtml(obsEnvio)}</div><div><b>Observaciones generales:</b> ${escapeHtml(obsGeneral)}</div></div></div></div>`;
     return `<tr style="cursor:default;"><td class="mono">${escapeHtml(p.id)}</td><td>${escapeHtml(p.zona)}</td>
       <td>${escapeHtml(p.familia)} · ${escapeHtml(p.marca)} · ${escapeHtml(p.descripcion)} ${pct(sc)}</td>
