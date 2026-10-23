@@ -346,6 +346,13 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 .rem-actions .rem-delete{color:#d92d20;}
 .rem-actions .rem-edit{color:var(--accent);}
 .rem-editing input{width:100%;min-width:85px;box-sizing:border-box;}
+.xl-movement{display:flex;gap:10px;align-items:flex-start;font-size:12px;margin:0 0 7px;padding:7px 9px;border:1px solid var(--line-soft);border-radius:7px;background:var(--surface);}
+.xl-movement input{margin:3px 0 0;flex:none;}
+.xl-move-time{display:flex;flex-direction:column;gap:3px;min-width:86px;padding-right:9px;border-right:1px solid var(--line);}
+.xl-move-date{font-weight:650;white-space:nowrap;}
+.xl-move-hour{color:var(--ink-soft);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.xl-move-info{min-width:0;line-height:1.45;}
+@media(max-width:768px){.xl-movement{gap:7px;padding:6px;}.xl-move-time{min-width:74px;padding-right:6px;}}
 
 /* ================= VERSIÓN CELULAR ================= */
 @media (max-width:768px){
@@ -2385,7 +2392,7 @@ function altAceptar(a){
 setTimeout(()=>altRevisar(true), 4000);
 setInterval(()=>altRevisar(true), 10*60*1000);
 /* ================= STOCK Y REMITOS ================= */
-const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:"", remSortBy:"fecha", remSortDir:"desc", remClosed:new Set(), concNumero:"", concDestino:"", concFecha:"", concSortBy:"fecha", concSortDir:"asc"};
+const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:"", remSortBy:"fecha", remSortDir:"desc", remClosed:new Set(), concNumero:"", concDestino:"", concFecha:"", concSortBy:"fecha", concSortDir:"asc", contFecha:"", contSortDir:"desc"};
 const mk = s => String(s||"").trim().toLowerCase().replace(/\s+/g," ");
 const stDisplayDate = s => {const m=String(s||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?`${m[3]}/${m[2]}/${m[1]}`:(s||"—");};
 function stState(){ state.remitos=state.remitos||[]; state.movs=state.movs||[]; state.conteos=state.conteos||[]; }
@@ -2452,6 +2459,7 @@ const tabs = [["conc","Conciliación"],["rem","Remitos"],["mov","Movimientos"],[
   </div>
   ${stk.tab==="rem"?`<div class="filters" style="align-items:center;margin-top:-6px;"><label class="st-lbl">N° de remito <select class="rem-filter" id="remFilterNumero"><option value="">Todos los remitos</option></select></label><label class="st-lbl">Destino <select class="rem-filter" id="remFilterDestino"><option value="">Todos los destinos</option></select></label><label class="st-lbl">Fecha <select class="rem-filter" id="remFilterFecha"><option value="">Todas las fechas</option></select></label><label class="st-lbl">Ordenar por <select id="remSortBy"><option value="fecha" ${stk.remSortBy==="fecha"?"selected":""}>Fecha</option><option value="numero" ${stk.remSortBy==="numero"?"selected":""}>N° de remito</option></select></label><label class="st-lbl">Orden <select id="remSortDir"><option value="asc" ${stk.remSortDir==="asc"?"selected":""}>Menor a mayor</option><option value="desc" ${stk.remSortDir==="desc"?"selected":""}>Mayor a menor</option></select></label><button class="btn ghost small" id="remFilterClear">Limpiar filtros</button></div>`:""}
   ${stk.tab==="conc"?`<div class="filters" style="align-items:center;margin-top:-6px;"><label class="st-lbl">Remito <select class="rem-filter" id="concFilterNumero"><option value="">Todos los remitos</option></select></label><label class="st-lbl">Fecha <select class="rem-filter" id="concFilterFecha"><option value="">Todas las fechas</option></select></label><label class="st-lbl">Destino <select class="rem-filter" id="concFilterDestino"><option value="">Todos los destinos</option></select></label><label class="st-lbl">Ordenar por <select id="concSortBy"><option value="numero" ${stk.concSortBy==="numero"?"selected":""}>Remito</option><option value="fecha" ${stk.concSortBy==="fecha"?"selected":""}>Fecha</option></select></label><label class="st-lbl">Orden <select id="concSortDir"><option value="asc" ${stk.concSortDir==="asc"?"selected":""}>Menor a mayor</option><option value="desc" ${stk.concSortDir==="desc"?"selected":""}>Mayor a menor</option></select></label></div>`:""}
+  ${stk.tab==="cont"?`<div class="filters" style="align-items:center;margin-top:-6px;"><label class="st-lbl">Fecha del conteo <select id="contFilterFecha"><option value="">Todas las fechas</option></select></label><label class="st-lbl">Orden por fecha <select id="contSortDir"><option value="desc" ${stk.contSortDir==="desc"?"selected":""}>Mayor a menor</option><option value="asc" ${stk.contSortDir==="asc"?"selected":""}>Menor a mayor</option></select></label></div>`:""}
   <div id="stBody"></div>`;
 
   viewEl.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{ stk.tab=b.dataset.tab; stk.st=""; renderStock(); });
@@ -2471,6 +2479,8 @@ const tabs = [["conc","Conciliación"],["rem","Remitos"],["mov","Movimientos"],[
   if(el("concFilterDestino"))el("concFilterDestino").onchange=e=>{stk.concDestino=e.target.value;drawStockBody();};
   if(el("concSortBy"))el("concSortBy").onchange=e=>{stk.concSortBy=e.target.value;drawStockBody();};
   if(el("concSortDir"))el("concSortDir").onchange=e=>{stk.concSortDir=e.target.value;drawStockBody();};
+  if(el("contFilterFecha"))el("contFilterFecha").onchange=e=>{stk.contFecha=e.target.value;drawStockBody();};
+  if(el("contSortDir"))el("contSortDir").onchange=e=>{stk.contSortDir=e.target.value;drawStockBody();};
 
   const fs = STF[stk.tab];
   if(fs){
@@ -2544,8 +2554,9 @@ function drawStockBody(){
     html = tbl(["Fecha","Tipo","Material","Cantidad","N° remito",""], f.map(m=>`<tr><td class="mono">${m.fecha}</td><td>${m.tipo}</td><td>${escapeHtml(m.material)}</td><td>${m.cant}</td><td>${escapeHtml(m.remito||"—")}</td><td>${rmBtn("movs",m.id)}</td></tr>`).join(""));
   }
   else {
-    const f = state.conteos.filter(c=>inRange(c.fecha)&&hit(c.material,c.nota)&&(!stk.st||(stk.st==="ok")===(c.fisico===c.sistema))).sort((a,b)=>a.fecha<b.fecha?1:-1);
-    html = tbl(["Fecha","Material","Físico","Sistema","Diferencia","Estado","Observación",""], f.map(c=>{ const d=c.fisico-c.sistema; return `<tr><td class="mono">${c.fecha}</td><td>${escapeHtml(c.material)}</td><td>${c.fisico}</td><td>${c.sistema}</td><td style="color:${d?"var(--red)":"inherit"}">${d>0?"+":""}${d}</td><td><span class="badge ${d?"atrasado":"completado"}">${d?(d<0?"Faltante físico":"Sobrante físico"):"Coincide"}</span></td><td>${escapeHtml(c.nota||"")}</td><td>${rmBtn("conteos",c.id)}</td></tr>`; }).join(""));
+    const dates=[...new Set(state.conteos.map(c=>c.fecha).filter(Boolean))].sort();const sf=el("contFilterFecha");if(sf)sf.innerHTML=`<option value="">Todas las fechas</option>`+dates.map(d=>`<option value="${escapeAttr(d)}" ${d===stk.contFecha?"selected":""}>${escapeHtml(stDisplayDate(d))}</option>`).join("");
+    const f = state.conteos.filter(c=>inRange(c.fecha)&&hit(c.material,c.nota)&&(!stk.st||(stk.st==="ok")===(c.fisico===c.sistema))&&(!stk.contFecha||c.fecha===stk.contFecha)).sort((a,b)=>String(a.fecha||"").localeCompare(String(b.fecha||""))*(stk.contSortDir==="asc"?1:-1));
+    html = tbl(["Fecha","Material","Físico","Sistema","Diferencia","Estado","Observación",""], f.map(c=>{ const d=c.fisico-c.sistema; return `<tr><td class="mono">${escapeHtml(stDisplayDate(c.fecha))}</td><td>${escapeHtml(c.material)}</td><td>${c.fisico}</td><td>${c.sistema}</td><td style="color:${d?"var(--red)":"inherit"}">${d>0?"+":""}${d}</td><td><span class="badge ${d?"atrasado":"completado"}">${d?(d<0?"Faltante físico":"Sobrante físico"):"Coincide"}</span></td><td>${escapeHtml(c.nota||"")}</td><td>${rmBtn("conteos",c.id)}</td></tr>`; }).join(""));
   }
   body.innerHTML = html;
   body.querySelectorAll("details.rem-folder").forEach(d=>d.addEventListener("toggle",()=>{if(d.open)stk.remClosed.delete(d.dataset.remFolder);else stk.remClosed.add(d.dataset.remFolder);}));
@@ -2667,7 +2678,7 @@ function drawRemExcel(body){
     }
     const enLista = new Set(lista.map(c=>c.e.key));
     vinc.forEach(v=>{ if(!enLista.has(v.key)) lista.push({e:v, sc:1, gone:!!x.movs}); });   // guardados que ya no se ven en el Excel
-    lista.sort((a,b)=>((a.e.f||"")+(a.e.h||""))<((b.e.f||"")+(b.e.h||""))?-1:1);
+    lista.sort((a,b)=>((a.e.f||"").localeCompare(b.e.f||""))||((a.e.h||"").localeCompare(b.e.h||"")));
     lista = todos ? lista.slice(-30) : lista.slice(0,15);
 
     const sal = vinc.filter(v=>v.tipo==="SALIDA");
@@ -2683,10 +2694,10 @@ function drawRemExcel(body){
 
     const items = lista.map(c=>{
       const e = c.e, otro = usadoPor[e.key] && usadoPor[e.key]!==r.id;
-      return `<label style="display:flex;gap:6px;align-items:flex-start;font-size:12px;margin-bottom:5px;${otro?"opacity:.5;":""}">
+      return `<label class="xl-movement" style="${otro?"opacity:.5;":""}">
         <input type="checkbox" class="xl-chk" data-r="${r.id}" data-k="${escapeAttr(e.key)}" ${keys.has(e.key)?"checked":""} ${otro?"disabled":""}>
-        <span><b>${e.f||"s/fecha"} ${e.h||""}</b> <span class="badge ${XL_TIPO[e.tipo]||"pendiente"}">${escapeHtml(e.tipo)}</span>
-        ${escapeHtml(e.fam)} · ${escapeHtml(e.desc)}${e.marca&&e.marca!=="No especificado"?" ("+escapeHtml(e.marca)+")":""} · <b>${e.cant} ${escapeHtml(e.unidad)}</b><br>
+        <span class="xl-move-time"><span class="xl-move-date">${escapeHtml(stDisplayDate(e.f)||"s/fecha")}</span><span class="xl-move-hour">${escapeHtml(e.h||"Sin hora")}</span></span>
+        <span class="xl-move-info"><span class="badge ${XL_TIPO[e.tipo]||"pendiente"}">${escapeHtml(e.tipo)}</span> ${escapeHtml(e.fam)} · ${escapeHtml(e.desc)}${e.marca&&e.marca!=="No especificado"?" ("+escapeHtml(e.marca)+")":""} · <b>${e.cant} ${escapeHtml(e.unidad)}</b><br>
         <span style="color:var(--ink-soft);">Obra: ${escapeHtml(e.obra||"—")} · ${escapeHtml(e.resp||"—")} · ${escapeHtml(e.pedido)}${e.envio?" / "+escapeHtml(e.envio):""}${e.zona?" · "+escapeHtml(e.zona):""}
         ${c.sc<0.99&&!c.gone?` · parecido ${Math.round(c.sc*100)}%`:""}${c.gone?" · ⚠ ya no está en el Excel":""}${otro?" · usado en otra línea":""}</span></span></label>`;
     }).join("") || (x.movs ? `<span style="color:var(--grey);font-size:12px;">Sin movimientos parecidos entre ${desde} y ${lim}</span>` : "");
