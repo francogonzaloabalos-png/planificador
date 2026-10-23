@@ -2385,7 +2385,6 @@ function altAceptar(a){
 setTimeout(()=>altRevisar(true), 4000);
 setInterval(()=>altRevisar(true), 10*60*1000);
 /* ================= STOCK Y REMITOS ================= */
-const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:"", remSortBy:"fecha", remSortDir:"desc", remClosed:new Set()};
 const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:"", remSortBy:"fecha", remSortDir:"desc", remClosed:new Set(), concNumero:"", concDestino:"", concFecha:"", concSortBy:"fecha", concSortDir:"asc"};
 const mk = s => String(s||"").trim().toLowerCase().replace(/\s+/g," ");
 const stDisplayDate = s => {const m=String(s||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?`${m[3]}/${m[2]}/${m[1]}`:(s||"—");};
@@ -2509,7 +2508,6 @@ function drawStockBody(){
 
   if(stk.tab==="conc"){
     const {rows, orph} = concilia();
-    const f = rows.filter(x=>inRange(x.r.fecha)&&hit(x.r.numero,x.r.material,x.r.destino)&&(!stk.st||x.st===stk.st));
     const setConcOptions=(id,values,selected,placeholder,display=x=>x)=>{const s=el(id);if(!s)return;const vals=[...new Set(values.filter(Boolean).map(String))].sort((a,b)=>a.localeCompare(b,"es",{numeric:true}));s.innerHTML=`<option value="">${placeholder}</option>`+vals.map(v=>`<option value="${escapeAttr(v)}" ${v===selected?"selected":""}>${escapeHtml(display(v))}</option>`).join("");};
     setConcOptions("concFilterNumero",rows.map(x=>x.r.numero),stk.concNumero,"Todos los remitos");
     setConcOptions("concFilterFecha",rows.map(x=>x.r.fecha),stk.concFecha,"Todas las fechas",stDisplayDate);
@@ -2750,6 +2748,7 @@ requestAnimationFrame(()=> requestAnimationFrame(render));
 </script>
 </body>
 </html>
+
 
 
 
