@@ -355,6 +355,11 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 .xl-stock-detail{display:flex;gap:18px;flex-wrap:wrap;padding:8px 12px;background:var(--line-soft);border-bottom:1px solid var(--line);font-size:12px;line-height:1.5;}
 .xl-stock-detail b{color:var(--ink);}
 .xl-stock-detail-item{min-width:220px;}
+.xl-stock-compare{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;width:100%;margin-top:3px;}
+.xl-stock-compare-card{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:8px 10px;}
+.xl-stock-compare-card>div+div{margin-top:4px;}
+.xl-stock-compare-title{font-weight:650;margin-bottom:5px!important;}
+.xl-stock-status{display:inline-flex;align-items:center;gap:5px;font-weight:650;}
 @media(max-width:768px){.xl-movement{gap:7px;padding:6px;}.xl-move-time{min-width:74px;padding-right:6px;}}
 
 /* ================= VERSIÓN CELULAR ================= */
@@ -2616,10 +2621,12 @@ function xlFecha(s){
   const m = String(s||"").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   return m ? `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}` : "";
 }
+function xlFechaNormalizada(s){const v=String(s||"").trim(),es=xlFecha(v),iso=v.match(/^(\d{4})-(\d{2})-(\d{2})/);return es||(iso?`${iso[1]}-${iso[2]}-${iso[3]}`:"");}
 function xlHora(s){
   const m = String(s||"").match(/(\d{1,2}):(\d{2})/);
   return m ? m[1].padStart(2,"0")+":"+m[2] : "";
 }
+function xlObs(m,keys){const vals=[...new Set(keys.map(k=>String(m?.[k]??"").trim()).filter(Boolean))];return vals.join(" · ")||"—";}
 function xlEntry(m){
   return {key:m.key, f:m.f, h:m.h, tipo:String(m.tipo||"").toUpperCase(), fam:m.familia||"", marca:m.marca||"",
     desc:m.descripcion||"", cant:N(m.cantidad), unidad:m.unidad||"", resp:m.responsable||"", obra:m.obra||"",
@@ -2741,7 +2748,17 @@ function xlDrawBusq(){
     const ub = [p.ubicacion_deposito, p.ubicacion_estante, p.ubicacion_columna, p.ubicacion_fila].filter(Boolean).join(" · ");
     const ultFecha=stDisplayDate(p.ult_fecha),ultHora=String(p.ult_hora||"").trim(),ultObs=String(p.ult_obs||"").trim();
     const tieneAcumulados=["entradas","salidas","devoluciones"].some(k=>p[k]!==undefined&&p[k]!==null&&p[k]!=="");
-    const detalle=`<div class="xl-stock-detail"><div class="xl-stock-detail-item"><b>Último movimiento:</b> ${escapeHtml(ultFecha||"—")}${ultHora?` <span style="margin-left:8px;border-left:1px solid var(--line);padding-left:8px;color:var(--ink-soft);">${escapeHtml(ultHora)}</span>`:""}<br><b>Observaciones:</b> ${escapeHtml(ultObs||"—")}</div>${tieneAcumulados?`<div class="xl-stock-detail-item"><b>Acumulado:</b> Entradas ${escapeHtml(p.entradas??"—")} · Salidas ${escapeHtml(p.salidas??"—")} · Devoluciones ${escapeHtml(p.devoluciones??"—")}</div>`:""}</div>`;
+    const sameProduct=m=>[m.zona,m.familia,m.marca,m.descripcion].map(altNk).join("|")===[p.zona,p.familia,p.marca,p.descripcion].map(altNk).join("|");
+    const ultMov=(x.movs||[]).filter(sameProduct).slice().sort((a,b)=>((a.f||"")+(a.h||"")).localeCompare((b.f||"")+(b.h||""))).pop();
+    const movFecha=ultMov?.f||xlFechaNormalizada(ultMov?.fecha),movHora=ultMov?.h||xlHora(ultMov?.fecha);
+    const stockDia=xlFechaNormalizada(p.ult_fecha),stockHora=xlHora(ultHora);
+    const comparable=!!(ultMov&&stockDia&&stockHora&&movFecha&&movHora);
+    const tipoStock=String(p.ult_mov||"").trim().toUpperCase(),tipoMov=String(ultMov?.tipo||"").trim().toUpperCase();
+    const coincide=comparable&&stockDia===movFecha&&stockHora===movHora&&(!tipoStock||tipoStock===tipoMov);
+    const estado=coincide?`<span class="badge completado xl-stock-status">✓ Coincide</span>`:!ultMov?`<span class="badge pendiente xl-stock-status">Sin movimiento coincidente en Movimientos</span>`:!comparable?`<span class="badge pendiente xl-stock-status">No se pudo comparar fecha y hora</span>`:`<span class="badge atrasado xl-stock-status">✕ No coincide</span>`;
+    const obsItem=xlObs(ultMov,["observacion_item","observaciones_item","observacion_del_item","observaciones_del_item","obs_item","observacion_producto","observaciones_producto","obs_producto","observacion","observaciones","nota_item","nota","comentario_item"]);
+    const obsEnvio=xlObs(ultMov,["observacion_envio","observaciones_envio","observacion_del_envio","observaciones_del_envio","obs_envio","envio_observaciones","comentario_envio"]);
+    const detalle=`<div class="xl-stock-detail"><div class="xl-stock-detail-item"><b>Último movimiento en Stock:</b> ${escapeHtml(ultFecha||"—")}${ultHora?` <span style="margin-left:8px;border-left:1px solid var(--line);padding-left:8px;color:var(--ink-soft);">${escapeHtml(ultHora)}</span>`:""}<br><b>Observaciones de Stock:</b> ${escapeHtml(ultObs||"—")}</div>${tieneAcumulados?`<div class="xl-stock-detail-item"><b>Acumulado:</b> Entradas ${escapeHtml(p.entradas??"—")} · Salidas ${escapeHtml(p.salidas??"—")} · Devoluciones ${escapeHtml(p.devoluciones??"—")}</div>`:""}<div class="xl-stock-compare"><div class="xl-stock-compare-card"><div class="xl-stock-compare-title">Comparación con Movimientos ${estado}</div><div><b>Último registro:</b> ${ultMov?`${escapeHtml(stDisplayDate(movFecha))} · ${escapeHtml(movHora||"Sin hora")}${tipoMov?` · ${escapeHtml(tipoMov)}`:""}`:"No se encontró un movimiento del producto"}</div><div><b>Observación del ítem:</b> ${escapeHtml(obsItem)}</div><div><b>Observación del envío:</b> ${escapeHtml(obsEnvio)}</div></div></div></div>`;
     return `<tr style="cursor:default;"><td class="mono">${escapeHtml(p.id)}</td><td>${escapeHtml(p.zona)}</td>
       <td>${escapeHtml(p.familia)} · ${escapeHtml(p.marca)} · ${escapeHtml(p.descripcion)} ${pct(sc)}</td>
       <td><b>${p.stock_actual}</b> ${escapeHtml(p.unidad||"")}</td><td>${p.stock_minimo}</td>
