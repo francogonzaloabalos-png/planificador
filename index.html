@@ -58,7 +58,11 @@ input,select,textarea{font-family:inherit;font-size:13px;}
   width:100%;padding:0;outline:none;
 }
 .sidebar .brand .sub{color:rgba(255,255,255,.5);font-size:12px;margin-top:3px;}
-.nav{padding:10px 10px;display:flex;flex-direction:column;gap:2px;}
+.nav{padding:10px 10px;display:flex;flex-direction:column;gap:2px;flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent;}
+.sidebar{min-height:0;}
+.nav::-webkit-scrollbar{width:7px;}
+.nav::-webkit-scrollbar-thumb{background:rgba(255,255,255,.28);border-radius:6px;}
+.nav::-webkit-scrollbar-track{background:transparent;}
 .nav button{
   background:none;border:none;color:rgba(255,255,255,.72);text-align:left;
   padding:9px 10px;border-radius:var(--radius);font-size:13.5px;font-weight:500;
@@ -412,18 +416,18 @@ table.xl-conciliation tbody td:nth-child(-n+5){position:sticky;top:10px;vertical
 
 /* ================= VERSIÓN CELULAR ================= */
 @media (max-width:768px){
-  .shell{display:block;height:auto;overflow:visible;}
-  .main{display:block;}
-  .sidebar{width:100%;flex-direction:column;}
+  .shell{display:block;height:auto;min-height:100vh;overflow:visible;padding:7px;}
+  .main{display:flex;min-height:calc(100vh - 14px);}
+  .sidebar{width:100%;max-height:54vh;min-height:0;flex-direction:column;}
   .sidebar .brand{padding:12px 14px 8px;}
   .sidebar .brand .sub{display:none;}
-  .nav{flex-direction:row;overflow-x:auto;padding:6px 8px;}
-  .nav button{white-space:nowrap;flex:none;}
-  .sidebar-foot{margin-top:0;padding:8px 10px;}
-  .sidebar-foot button{width:auto !important;margin-bottom:0 !important;flex:1 1 40%;}
+  .nav{flex:1 1 auto;flex-direction:column;overflow-y:auto;overflow-x:hidden;max-height:30vh;min-height:92px;padding:5px 8px;}
+  .nav button{white-space:normal;flex:none;width:100%;min-height:42px;padding:10px 12px;}
+  .sidebar-foot{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin-top:0;padding:8px 10px;}
+  .sidebar-foot button{width:auto !important;min-height:40px;margin-bottom:0 !important;}
   .topbar{height:auto;flex-direction:column;align-items:flex-start;gap:4px;padding:10px 14px;}
   .topbar .stats{flex-wrap:wrap;gap:10px;}
-  .view{overflow:visible;padding:12px;}
+  .view{flex:1;min-width:0;overflow:visible;padding:10px;}
 
   /* Gantt */
   .gantt-left{width:120px;}
@@ -436,7 +440,19 @@ table.xl-conciliation tbody td:nth-child(-n+5){position:sticky;top:10px;vertical
 
   /* Listado */
   table.data{display:block;overflow-x:auto;white-space:nowrap;}
-  .filters select,.filters input{flex:1 1 45%;}
+  .filters{align-items:stretch!important;gap:8px;}
+  .filters select,.filters input{flex:1 1 calc(50% - 8px);min-width:0;}
+  .filters .st-lbl{flex:1 1 calc(50% - 8px);min-width:0;flex-direction:column;align-items:stretch;gap:4px;}
+  .st-tabs{flex-wrap:nowrap;overflow-x:auto;padding:2px 1px 8px;scrollbar-width:thin;}
+  .st-tabs .btn{flex:none;min-height:40px;}
+  .rem-image-preview{min-height:220px;max-height:38vh;}
+  .rem-image-preview img{max-height:38vh;}
+  .rem-image-item{grid-template-columns:minmax(0,1fr) minmax(85px,.55fr);}
+  .rem-image-item>[data-rem-ai-remove]{grid-column:1/-1;width:100%;min-height:38px;}
+  table.data{min-width:680px;}
+  table.xl-conciliation tbody td:nth-child(-n+5){position:static;}
+  .quick-saved-item{align-items:flex-start;}
+  .quick-saved-item>button:first-child{overflow-wrap:anywhere;}
 
   /* Bitácora */
   .log-day{flex-direction:column;gap:4px;}
@@ -805,7 +821,7 @@ function pushToFirebase(){
   try {
     fbRoomRef.set({data: state, updatedBy: clientId, updatedAt: Date.now()})
       .then(()=> setSyncStatus("ok", "Sincronizado " + nowTime()))
-      .catch(err=> setSyncStatus("err", "Error en la nube (revisá tu conexión)"));
+      .catch(err=> setSyncStatus("err", "Error en la nube: " + (err.code||err.message||"revisá conexión y permisos")));
   } catch(err) {
     setSyncStatus("err", "Error interno de datos: " + err.message);
   }
@@ -2453,8 +2469,8 @@ setInterval(()=>altRevisar(true), 10*60*1000);
 /* ================= STOCK Y REMITOS ================= */
 const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:"", remSortBy:"fecha", remSortDir:"desc", remClosed:new Set(), concNumero:"", concDestino:"", concFecha:"", concSortBy:"fecha", concSortDir:"asc", contFecha:"", contSortDir:"desc", xlPane:"conc", xlRemNumero:"", xlRemFecha:"", xlRemDestino:"", xlRemSortBy:"fecha", xlRemSortDir:"desc", contProductQuery:"", contSelectedProduct:null, contDate:todayStr(), contDetailOpen:new Set(), contMode:"excel", contManualDraft:{}, contMatchOpen:new Set(), contEdit:"", quickQuery:"", quickZone:"", quickFamily:"", quickSelected:null, quickSavedSelected:"", quickShowSaved:false};
 const remImageDraft={data:"",name:"",form:null,loading:false,error:""};
-function getGeminiKey(){ return (state.config&&state.config.geminiKey)||""; }
-function setGeminiKey(v){ state.config=state.config||{}; state.config.geminiKey=String(v||"").trim(); save(); }
+function getGeminiKey(){ return String(state.config?.geminiKey||""); }
+function setGeminiKey(v){ state.config=state.config||{};state.config.geminiKey=String(v||"").trim();save(); }
 const GEMINI_REMITO_MODEL="gemini-3.5-flash-lite";
 const mk = s => String(s||"").trim().toLowerCase().replace(/\s+/g," ");
 const stDisplayDate = s => s?fa(s):"—";
@@ -2516,7 +2532,7 @@ function remImageFieldsHtml(){
 function drawRemImageImporter(){
   const box=el("remImageImport");if(!box)return;
   if(!remImageDraft.data){box.innerHTML="";return;}
-  const review=remImageDraft.form?remImageFieldsHtml():`<div class="rem-image-review"><h3>Leer el remito con Gemini</h3><p class="rem-image-status">La imagen se enviará a Gemini para transcribir número, fecha, destino, obra, materiales y cantidades. Luego vas a poder corregir cada campo.</p><div class="field"><label>Clave API de Gemini (queda guardada y compartida con el equipo; si se queda sin crédito, pegá otra acá)</label><input id="remAiKey" type="password" autocomplete="off" placeholder="Pegá tu clave de Google AI Studio" value="${escapeAttr(getGeminiKey())}"></div><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn accent" id="remAiRead" ${remImageDraft.loading?"disabled":""}>${remImageDraft.loading?"Leyendo imagen…":"Analizar imagen"}</button><button class="btn ghost" id="remAiCancel" ${remImageDraft.loading?"disabled":""}>Quitar imagen</button></div><div class="rem-image-status">Necesitás una clave de Gemini API. No la guardes dentro del archivo HTML.</div>${remImageDraft.error?`<div style="color:var(--red);font-size:12px;">${escapeHtml(remImageDraft.error)}</div>`:""}</div>`;
+  const review=remImageDraft.form?remImageFieldsHtml():`<div class="rem-image-review"><h3>Leer el remito con Gemini</h3><p class="rem-image-status">La imagen se enviará a Gemini para transcribir número, fecha, destino, obra, materiales y cantidades. Luego vas a poder corregir cada campo.</p><div class="field"><label>Clave API de Gemini (se guarda en la configuración compartida)</label><input id="remAiKey" type="password" autocomplete="off" placeholder="Pegá tu clave de Google AI Studio" value="${escapeAttr(getGeminiKey())}"></div><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn accent" id="remAiRead" ${remImageDraft.loading?"disabled":""}>${remImageDraft.loading?"Leyendo imagen…":"Analizar imagen"}</button><button class="btn ghost" id="remAiCancel" ${remImageDraft.loading?"disabled":""}>Quitar imagen</button></div><div class="rem-image-status">La clave se comparte con las computadoras conectadas a la misma sala.</div>${remImageDraft.error?`<div style="color:var(--red);font-size:12px;">${escapeHtml(remImageDraft.error)}</div>`:""}</div>`;
   box.innerHTML=`<section class="rem-image-layout"><div class="rem-image-preview"><img src="${remImageDraft.data}" alt="Imagen del remito seleccionada"></div>${review}</section>`;
   const key=box.querySelector("#remAiKey");if(key)key.onchange=e=>{setGeminiKey(e.target.value);};
   const read=box.querySelector("#remAiRead");if(read)read.onclick=()=>{const k=key?key.value.trim():getGeminiKey();if(k!==getGeminiKey())setGeminiKey(k);if(!getGeminiKey()){remImageDraft.error="Pegá la clave API para poder analizar la imagen.";drawRemImageImporter();return;}analizarRemitoConGemini();};
