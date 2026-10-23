@@ -2582,7 +2582,7 @@ function guardarRemitoDesdeImagen(){
   if(!f.items.length)faltan.push("al menos un producto");
   if(f.items.some(i=>!i.material||i.cantidad===""||!Number.isFinite(Number(i.cantidad))))faltan.push("material y cantidad numérica en cada producto");
   if(faltan.length){remImageDraft.error="No se guardó. Falta completar: "+faltan.join("; ")+".";drawRemImageImporter();return;}
-  stState();const imageId=uid();state.remitoImagenes.push({id:imageId,nombre:remImageDraft.name,data:remImageDraft.data});
+  stState();const imagenId=uid();state.remitoImagenes.push({id:imagenId,nombre:remImageDraft.name,data:remImageDraft.data});
   f.items.forEach(i=>state.remitos.push({id:uid(),numero:f.numero,fecha:f.fecha,destino:f.destino,obra:f.obra,material:i.material,cant:N(i.cantidad),imagenId}));
   save();remImageDraft.data="";remImageDraft.name="";remImageDraft.form=null;remImageDraft.error="";drawRemImageImporter();drawStockBody();
 }
