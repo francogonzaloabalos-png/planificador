@@ -2525,7 +2525,21 @@ function drawRemImageImporter(){
   const add=box.querySelector("#remAiAddItem");if(add)add.onclick=()=>{remImageDraft.form.items.push({material:"",cantidad:""});drawRemImageImporter();};
   box.querySelectorAll("[data-rem-ai-remove]").forEach(b=>b.onclick=()=>{remImageDraft.form.items.splice(Number(b.dataset.remAiRemove),1);drawRemImageImporter();});
   const cancel=box.querySelector("#remAiCancel");if(cancel)cancel.onclick=()=>{remImageDraft.data="";remImageDraft.name="";remImageDraft.form=null;remImageDraft.error="";drawRemImageImporter();};
-  const saveBtn=box.querySelector("#remAiSave");if(saveBtn)saveBtn.onclick=guardarRemitoDesdeImagen;
+  const saveBtn=box.querySelector("#remAiSave");if(saveBtn)saveBtn.onclick=()=>{
+  let msg=box.querySelector("#remAiMsg");
+  if(!msg){msg=document.createElement("div");msg.id="remAiMsg";msg.style.cssText="color:#C1443C;font-size:13px;font-weight:600;width:100%;";saveBtn.parentNode.appendChild(msg);}
+  msg.textContent="";
+  try{
+    const f=remImageDraft.form,faltan=[];
+    if(!String(f.numero||"").trim())faltan.push("el número de remito");
+    if(!fechaRemitoISO(f.fecha))faltan.push("la fecha");
+    const items=(f.items||[]).filter(i=>String(i.material||"").trim()||String(i.cantidad||"").trim());
+    if(!items.length)faltan.push("al menos un producto");
+    if(items.some(i=>!String(i.material||"").trim()||String(i.cantidad||"").trim()===""||!Number.isFinite(Number(i.cantidad))))faltan.push("material y cantidad numérica en cada producto");
+    if(faltan.length){msg.textContent="No se guardó. Falta: "+faltan.join("; ")+".";return;}
+    guardarRemitoDesdeImagen();
+  }catch(err){msg.textContent="Error al guardar: "+(err.message||err);}
+};
 }
 
 function compressRemitoImage(file){
