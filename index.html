@@ -2386,6 +2386,7 @@ setTimeout(()=>altRevisar(true), 4000);
 setInterval(()=>altRevisar(true), 10*60*1000);
 /* ================= STOCK Y REMITOS ================= */
 const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:"", remSortBy:"fecha", remSortDir:"desc", remClosed:new Set()};
+const stk = {tab:"conc", q:"", from:"", to:"", st:"", tol:2, remNumero:"", remDestino:"", remFecha:"", remEdit:"", remSortBy:"fecha", remSortDir:"desc", remClosed:new Set(), concNumero:"", concDestino:"", concFecha:"", concSortBy:"fecha", concSortDir:"asc"};
 const mk = s => String(s||"").trim().toLowerCase().replace(/\s+/g," ");
 const stDisplayDate = s => {const m=String(s||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?`${m[3]}/${m[2]}/${m[1]}`:(s||"—");};
 function stState(){ state.remitos=state.remitos||[]; state.movs=state.movs||[]; state.conteos=state.conteos||[]; }
@@ -2451,6 +2452,7 @@ const tabs = [["conc","Conciliación"],["rem","Remitos"],["mov","Movimientos"],[
     ${stk.tab==="conc"?`<label class="st-lbl" title="Los descuentos en el sistema pueden hacerse hasta N días después de la fecha del remito">Plazo de descuento (días) <input type="number" id="stTol" min="0" max="30" value="${stk.tol}" style="width:60px;"></label>`:""}
   </div>
   ${stk.tab==="rem"?`<div class="filters" style="align-items:center;margin-top:-6px;"><label class="st-lbl">N° de remito <select class="rem-filter" id="remFilterNumero"><option value="">Todos los remitos</option></select></label><label class="st-lbl">Destino <select class="rem-filter" id="remFilterDestino"><option value="">Todos los destinos</option></select></label><label class="st-lbl">Fecha <select class="rem-filter" id="remFilterFecha"><option value="">Todas las fechas</option></select></label><label class="st-lbl">Ordenar por <select id="remSortBy"><option value="fecha" ${stk.remSortBy==="fecha"?"selected":""}>Fecha</option><option value="numero" ${stk.remSortBy==="numero"?"selected":""}>N° de remito</option></select></label><label class="st-lbl">Orden <select id="remSortDir"><option value="asc" ${stk.remSortDir==="asc"?"selected":""}>Menor a mayor</option><option value="desc" ${stk.remSortDir==="desc"?"selected":""}>Mayor a menor</option></select></label><button class="btn ghost small" id="remFilterClear">Limpiar filtros</button></div>`:""}
+  ${stk.tab==="conc"?`<div class="filters" style="align-items:center;margin-top:-6px;"><label class="st-lbl">Remito <select class="rem-filter" id="concFilterNumero"><option value="">Todos los remitos</option></select></label><label class="st-lbl">Fecha <select class="rem-filter" id="concFilterFecha"><option value="">Todas las fechas</option></select></label><label class="st-lbl">Destino <select class="rem-filter" id="concFilterDestino"><option value="">Todos los destinos</option></select></label><label class="st-lbl">Ordenar por <select id="concSortBy"><option value="numero" ${stk.concSortBy==="numero"?"selected":""}>Remito</option><option value="fecha" ${stk.concSortBy==="fecha"?"selected":""}>Fecha</option></select></label><label class="st-lbl">Orden <select id="concSortDir"><option value="asc" ${stk.concSortDir==="asc"?"selected":""}>Menor a mayor</option><option value="desc" ${stk.concSortDir==="desc"?"selected":""}>Mayor a menor</option></select></label></div>`:""}
   <div id="stBody"></div>`;
 
   viewEl.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{ stk.tab=b.dataset.tab; stk.st=""; renderStock(); });
@@ -2465,6 +2467,11 @@ const tabs = [["conc","Conciliación"],["rem","Remitos"],["mov","Movimientos"],[
   if(el("remFilterClear")) el("remFilterClear").onclick=()=>{stk.remNumero=stk.remDestino=stk.remFecha="";stk.q="";stk.from=stk.to="";renderStock();};
   if(el("remSortBy")) el("remSortBy").onchange=e=>{stk.remSortBy=e.target.value;drawStockBody();};
   if(el("remSortDir")) el("remSortDir").onchange=e=>{stk.remSortDir=e.target.value;drawStockBody();};
+  if(el("concFilterNumero"))el("concFilterNumero").onchange=e=>{stk.concNumero=e.target.value;drawStockBody();};
+  if(el("concFilterFecha"))el("concFilterFecha").onchange=e=>{stk.concFecha=e.target.value;drawStockBody();};
+  if(el("concFilterDestino"))el("concFilterDestino").onchange=e=>{stk.concDestino=e.target.value;drawStockBody();};
+  if(el("concSortBy"))el("concSortBy").onchange=e=>{stk.concSortBy=e.target.value;drawStockBody();};
+  if(el("concSortDir"))el("concSortDir").onchange=e=>{stk.concSortDir=e.target.value;drawStockBody();};
 
   const fs = STF[stk.tab];
   if(fs){
@@ -2503,6 +2510,11 @@ function drawStockBody(){
   if(stk.tab==="conc"){
     const {rows, orph} = concilia();
     const f = rows.filter(x=>inRange(x.r.fecha)&&hit(x.r.numero,x.r.material,x.r.destino)&&(!stk.st||x.st===stk.st));
+    const setConcOptions=(id,values,selected,placeholder,display=x=>x)=>{const s=el(id);if(!s)return;const vals=[...new Set(values.filter(Boolean).map(String))].sort((a,b)=>a.localeCompare(b,"es",{numeric:true}));s.innerHTML=`<option value="">${placeholder}</option>`+vals.map(v=>`<option value="${escapeAttr(v)}" ${v===selected?"selected":""}>${escapeHtml(display(v))}</option>`).join("");};
+    setConcOptions("concFilterNumero",rows.map(x=>x.r.numero),stk.concNumero,"Todos los remitos");
+    setConcOptions("concFilterFecha",rows.map(x=>x.r.fecha),stk.concFecha,"Todas las fechas",stDisplayDate);
+    setConcOptions("concFilterDestino",rows.map(x=>x.r.destino),stk.concDestino,"Todos los destinos");
+    const f = rows.filter(x=>inRange(x.r.fecha)&&hit(x.r.numero,x.r.material,x.r.destino)&&(!stk.st||x.st===stk.st)&&(!stk.concNumero||String(x.r.numero)===stk.concNumero)&&(!stk.concFecha||x.r.fecha===stk.concFecha)&&(!stk.concDestino||String(x.r.destino||"")===stk.concDestino)).sort((a,b)=>{const cmp=stk.concSortBy==="fecha"?String(a.r.fecha||"").localeCompare(String(b.r.fecha||"")):String(a.r.numero||"").localeCompare(String(b.r.numero||""),"es",{numeric:true});return cmp*(stk.concSortDir==="asc"?1:-1);});
     const c = k=>rows.filter(x=>x.st===k).length;
     html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
       <span class="badge completado">${c("ok")} coinciden</span>
