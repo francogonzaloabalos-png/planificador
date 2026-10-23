@@ -2745,7 +2745,6 @@ function drawRemExcel(body){
       <td><span class="badge ${ST_BADGE[st]}">${label}</span></td><td style="white-space:normal;min-width:380px;">${fuera?`<div style="font-size:12px;color:var(--amber);margin-bottom:5px;">Nada entre ${desde} y ${lim}. Lo más cercano de este producto:</div>`:""}${items}${verTodo}</td></tr>`;
   }).join("");
 
-  const conciliacionHtml=`<div class="xl-pane ${stk.xlPane==="conc"?"is-active":""}" id="xlPaneConciliacion"><div class="xl-primary-heading"><h2>Conciliar remitos con Movimientos</h2><p>Revisá las salidas sugeridas y tildá las que correspondan a cada línea del remito.</p></div>${xlRemFilters}${tbl(["Remito","Fecha","Producto del remito","Cant.","Estado","Movimientos del Excel (tildá los que corresponden)"], filas)}</div>`;
   const conciliacionHtml=`<div class="xl-pane ${stk.xlPane==="conc"?"is-active":""}" id="xlPaneConciliacion"><div class="xl-primary-heading"><h2>Conciliar remitos con Movimientos</h2><p>Revisá las salidas sugeridas y tildá las que correspondan a cada línea. El contexto del remito queda visible al desplazarte por sus movimientos.</p></div>${xlRemFilters}${tbl(["Remito","Fecha","Producto del remito","Cant.","Estado","Movimientos del Excel (tildá los que corresponden)"], filas)}</div>`;
   body.innerHTML = html + `<div class="xl-mode-tabs" role="tablist"><button class="xl-mode-tab ${stk.xlPane==="conc"?"is-active":""}" role="tab" aria-selected="${stk.xlPane==="conc"}" data-xl-pane="conc"><b>Conciliar remitos</b><small>Vincular líneas con movimientos</small></button><button class="xl-mode-tab ${stk.xlPane==="busqueda"?"is-active":""}" role="tab" aria-selected="${stk.xlPane==="busqueda"}" data-xl-pane="busqueda"><b>Consultar un producto en Excel</b><small>Stock actual y movimientos del producto</small></button></div><div class="xl-pane-stack">${conciliacionHtml}${busquedaHtml}</div>`;
   const concTable=body.querySelector("#xlPaneConciliacion table.data");if(concTable)concTable.classList.add("xl-conciliation");
@@ -2819,6 +2818,7 @@ requestAnimationFrame(()=> requestAnimationFrame(render));
 </script>
 </body>
 </html>
+
 
 
 
