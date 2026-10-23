@@ -374,6 +374,8 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 .xl-primary-heading{margin:18px 0 8px;}
 .xl-primary-heading h2{font-size:16px;margin:0 0 4px;}
 .xl-primary-heading p{font-size:12.5px;color:var(--ink-soft);margin:0;}
+table.xl-conciliation{overflow:visible;border-collapse:separate;border-spacing:0;}
+table.xl-conciliation tbody td:nth-child(-n+5){position:sticky;top:10px;vertical-align:top;background:var(--surface);z-index:2;}
 @media(max-width:768px){.xl-movement{gap:7px;padding:6px;}.xl-move-time{min-width:74px;padding-right:6px;}}
 
 /* ================= VERSIÓN CELULAR ================= */
@@ -2737,6 +2739,7 @@ function drawRemExcel(body){
 
   const conciliacionHtml=`<div class="xl-pane ${stk.xlPane==="conc"?"is-active":""}" id="xlPaneConciliacion"><div class="xl-primary-heading"><h2>Conciliar remitos con Movimientos</h2><p>Revisá las salidas sugeridas y tildá las que correspondan a cada línea del remito.</p></div>${xlRemFilters}${tbl(["Remito","Fecha","Producto del remito","Cant.","Estado","Movimientos del Excel (tildá los que corresponden)"], filas)}</div>`;
   body.innerHTML = html + `<div class="xl-mode-tabs" role="tablist"><button class="xl-mode-tab ${stk.xlPane==="conc"?"is-active":""}" role="tab" aria-selected="${stk.xlPane==="conc"}" data-xl-pane="conc"><b>Conciliar remitos</b><small>Vincular líneas con movimientos</small></button><button class="xl-mode-tab ${stk.xlPane==="busqueda"?"is-active":""}" role="tab" aria-selected="${stk.xlPane==="busqueda"}" data-xl-pane="busqueda"><b>Consultar un producto en Excel</b><small>Stock actual y movimientos del producto</small></button></div><div class="xl-pane-stack">${conciliacionHtml}${busquedaHtml}</div>`;
+  const concTable=body.querySelector("#xlPaneConciliacion table.data");if(concTable)concTable.classList.add("xl-conciliation");
   body.querySelector("#xlGo").onclick = xlCargar;
   body.querySelectorAll("[data-xl-pane]").forEach(b=>b.onclick=()=>{stk.xlPane=b.dataset.xlPane;body.querySelectorAll("[data-xl-pane]").forEach(t=>{const active=t===b;t.classList.toggle("is-active",active);t.setAttribute("aria-selected",String(active));});body.querySelector("#xlPaneConciliacion").classList.toggle("is-active",stk.xlPane==="conc");body.querySelector("#xlPaneBusqueda").classList.toggle("is-active",stk.xlPane==="busqueda");});
   ["xlRemNumero","xlRemFecha","xlRemDestino","xlRemSortBy","xlRemSortDir"].forEach(id=>body.querySelector("#"+id).onchange=e=>{const k={xlRemNumero:"xlRemNumero",xlRemFecha:"xlRemFecha",xlRemDestino:"xlRemDestino",xlRemSortBy:"xlRemSortBy",xlRemSortDir:"xlRemSortDir"}[id];stk[k]=e.target.value;drawStockBody();});
