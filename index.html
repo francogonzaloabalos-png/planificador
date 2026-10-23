@@ -2702,7 +2702,8 @@ function drawRemExcel(body){
   const usadoPor = {};
   state.remitos.forEach(r=>(r.vinc||[]).forEach(v=>{ usadoPor[v.key] = r.id; }));
 
-  const filas = lineas.map(r=>{
+  const filas = {pendientes:[], confirmadas:[]};
+  lineas.forEach(r=>{
     const need = N(r.cant), vinc = r.vinc || [], todos = !!stk.xlAll[r.id];
     const desde = addDaysStr(r.fecha, -stk.antes), lim = addDaysStr(r.fecha, stk.tol);
     const keys = new Set(vinc.map(v=>v.key));
@@ -2748,13 +2749,19 @@ function drawRemExcel(body){
         ${c.sc<0.99&&!c.gone?` · parecido ${Math.round(c.sc*100)}%`:""}${c.gone?" · ⚠ ya no está en el Excel":""}${otro?" · usado en otra línea":""}</span></span></label>`;
     }).join("") || (x.movs ? `<span style="color:var(--grey);font-size:12px;">Sin movimientos parecidos entre ${desde} y ${lim}</span>` : "");
     const verTodo = x.movs ? `<button class="btn ghost small xl-all" data-r="${r.id}" style="margin-top:4px;">${todos?"Volver a la ventana de fechas":"Ver todo el historial del producto"}</button>` : "";
-    return `<tr style="cursor:default;"><td class="mono">${escapeHtml(r.numero)}</td><td class="mono">${escapeHtml(fa(r.fecha))}</td><td>${escapeHtml(r.material)}${r.destino?`<br><span style="font-size:11.5px;color:var(--ink-soft);">${escapeHtml(r.destino)}</span>`:""}</td><td>${r.cant}</td>
+    const fila = `<tr style="cursor:default;"><td class="mono">${escapeHtml(r.numero)}</td><td class="mono">${escapeHtml(fa(r.fecha))}</td><td>${escapeHtml(r.material)}${r.destino?`<br><span style="font-size:11.5px;color:var(--ink-soft);">${escapeHtml(r.destino)}</span>`:""}</td><td>${r.cant}</td>
       <td><span class="badge ${ST_BADGE[st]}">${label}</span></td><td style="white-space:normal;min-width:380px;">${fuera?`<div style="font-size:12px;color:var(--amber);margin-bottom:5px;">Nada entre ${desde} y ${lim}. Lo más cercano de este producto:</div>`:""}${items}${verTodo}</td></tr>`;
-  }).join("");
+    filas[st==="ok"?"confirmadas":"pendientes"].push(fila);
+  });
 
-  const conciliacionHtml=`<div class="xl-pane ${stk.xlPane==="conc"?"is-active":""}" id="xlPaneConciliacion"><div class="xl-primary-heading"><h2>Conciliar remitos con Movimientos</h2><p>Revisá las salidas sugeridas y tildá las que correspondan a cada línea del remito.</p></div>${xlRemFilters}${tbl(["Remito","Fecha","Producto del remito","Cant.","Estado","Movimientos del Excel (tildá los que corresponden)"], filas)}</div>`;
+  stk.xlConcView=stk.xlConcView||"pendientes";
+  const remHeaders=["Remito","Fecha","Producto del remito","Cant.","Estado","Movimientos del Excel (tildá los que corresponden)"];
+  const remTable=tbl(remHeaders,filas[stk.xlConcView].join("")||`<tr><td colspan="6" style="text-align:center;color:var(--ink-soft);padding:18px;">No hay líneas ${stk.xlConcView==="confirmadas"?"confirmadas":"pendientes de confirmar"} con estos filtros.</td></tr>`);
+  const remTabs=`<div class="xl-mode-tabs" role="tablist" aria-label="Estado de conciliación"><button class="xl-mode-tab ${stk.xlConcView==="pendientes"?"is-active":""}" role="tab" aria-selected="${stk.xlConcView==="pendientes"}" data-xl-conc-view="pendientes"><b>Salidas a confirmar</b><small>${filas.pendientes.length} líneas pendientes o parciales</small></button><button class="xl-mode-tab ${stk.xlConcView==="confirmadas"?"is-active":""}" role="tab" aria-selected="${stk.xlConcView==="confirmadas"}" data-xl-conc-view="confirmadas"><b>Salidas confirmadas</b><small>${filas.confirmadas.length} líneas completas</small></button></div>`;
+  const conciliacionHtml=`<div class="xl-pane ${stk.xlPane==="conc"?"is-active":""}" id="xlPaneConciliacion"><div class="xl-primary-heading"><h2>Conciliar remitos con Movimientos</h2><p>Revisá las salidas sugeridas y tildá las que correspondan a cada línea del remito.</p></div>${xlRemFilters}${remTabs}${remTable}</div>`;
   body.innerHTML = html + `<div class="xl-mode-tabs" role="tablist"><button class="xl-mode-tab ${stk.xlPane==="conc"?"is-active":""}" role="tab" aria-selected="${stk.xlPane==="conc"}" data-xl-pane="conc"><b>Conciliar remitos</b><small>Vincular líneas con movimientos</small></button><button class="xl-mode-tab ${stk.xlPane==="busqueda"?"is-active":""}" role="tab" aria-selected="${stk.xlPane==="busqueda"}" data-xl-pane="busqueda"><b>Consultar un producto en Excel</b><small>Stock actual y movimientos del producto</small></button></div><div class="xl-pane-stack">${conciliacionHtml}${busquedaHtml}</div>`;
   const concTable=body.querySelector("#xlPaneConciliacion table.data");if(concTable)concTable.classList.add("xl-conciliation");
+  body.querySelectorAll("[data-xl-conc-view]").forEach(b=>b.onclick=()=>{stk.xlConcView=b.dataset.xlConcView;drawRemExcel(body);});
   body.querySelector("#xlGo").onclick = xlCargar;
   body.querySelectorAll("[data-xl-pane]").forEach(b=>b.onclick=()=>{stk.xlPane=b.dataset.xlPane;body.querySelectorAll("[data-xl-pane]").forEach(t=>{const active=t===b;t.classList.toggle("is-active",active);t.setAttribute("aria-selected",String(active));});body.querySelector("#xlPaneConciliacion").classList.toggle("is-active",stk.xlPane==="conc");body.querySelector("#xlPaneBusqueda").classList.toggle("is-active",stk.xlPane==="busqueda");});
   ["xlRemNumero","xlRemFecha","xlRemDestino","xlRemSortBy","xlRemSortDir"].forEach(id=>body.querySelector("#"+id).onchange=e=>{const k={xlRemNumero:"xlRemNumero",xlRemFecha:"xlRemFecha",xlRemDestino:"xlRemDestino",xlRemSortBy:"xlRemSortBy",xlRemSortDir:"xlRemSortDir"}[id];stk[k]=e.target.value;drawStockBody();});
