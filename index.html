@@ -1084,7 +1084,7 @@ function renderGantt(){
     </div>`;
     tasksByStage(stage.id).forEach(t=>{
       const mem = memberById(t.memberId);
-      html += `<div class="task-row-label" data-task="${t.id}">
+      html += `<div class="task-row-label" data-task="${t.id}" draggable="true" title="Arrastrá para cambiar el orden">
         <span class="prio ${t.priority}"></span>
         <span class="tname">${escapeHtml(t.name)}</span>
         <span class="who">${mem?escapeHtml(mem.name.split(" ")[0]):""}</span>
@@ -1152,6 +1152,27 @@ function renderGantt(){
   });
 
   attachGanttDrag(minDate);
+
+  // reordenar tareas arrastrando el nombre
+  let dragTaskId = null;
+  viewEl.querySelectorAll(".task-row-label").forEach(row=>{
+    row.addEventListener("dragstart",(e)=>{ dragTaskId = row.dataset.task; e.dataTransfer.setData("text/plain", dragTaskId); e.dataTransfer.effectAllowed = "move"; row.style.opacity = ".4"; });
+    row.addEventListener("dragend",()=>{ dragTaskId = null; viewEl.querySelectorAll(".task-row-label").forEach(r=>{ r.style.opacity=""; r.style.background=""; }); });
+    row.addEventListener("dragover",(e)=>{ if(!dragTaskId) return; e.preventDefault(); row.style.background = "var(--accent-soft)"; });
+    row.addEventListener("dragleave",()=>{ row.style.background = ""; });
+    row.addEventListener("drop",(e)=>{
+      e.preventDefault();
+      const toId = row.dataset.task;
+      if(!dragTaskId || dragTaskId===toId) return;
+      const from = state.tasks.findIndex(t=>t.id===dragTaskId);
+      const to = state.tasks.findIndex(t=>t.id===toId);
+      if(from<0 || to<0 || state.tasks[from].stageId!==state.tasks[to].stageId) return;
+      const [moved] = state.tasks.splice(from,1);
+      state.tasks.splice(to,0,moved);
+      dragTaskId = null;
+      save(); renderGantt();
+    });
+  });
 
   // sync vertical scroll between left labels and right timeline
   const leftPanel = viewEl.querySelector(".gantt-left");
@@ -1404,6 +1425,7 @@ function renderTeam(){
         <div class="avatar" style="background:${color}">${initials(m.name)}</div>
         <div style="flex:1;"><div class="mname">${escapeHtml(m.name)}</div><div class="mload">${escapeHtml(m.role||"")}</div></div>
         <button class="btn ghost small edit-member" data-member="${m.id}">Editar</button>
+        <button class="btn ghost small del-member" data-member="${m.id}" title="Eliminar perfil" style="color:var(--red);">✕</button>
       </div>
       <div class="mload">${active} tarea(s) activa(s)</div>
       <div class="load-bar"><div class="f" style="width:${clamp(active/maxRef*100,0,100)}%;background:${color}"></div></div>
@@ -1417,6 +1439,16 @@ function renderTeam(){
   html += `</div>`;
   viewEl.innerHTML = html;
   el("newMemberBtn").onclick = ()=>openMemberModal(null);
+  viewEl.querySelectorAll(".del-member").forEach(btn=>{
+    btn.addEventListener("click",(e)=>{
+      e.stopPropagation();
+      if(!confirm("¿Eliminar a este integrante? Sus tareas quedan sin asignar.")) return;
+      const id = btn.dataset.member;
+      state.members = state.members.filter(m=>m.id!==id);
+      state.tasks.forEach(t=>{ if(t.memberId===id) t.memberId = null; });
+      save(); render();
+    });
+  });
   viewEl.querySelectorAll(".edit-member").forEach(btn=>{
     btn.addEventListener("click", (e)=>{ e.stopPropagation(); openMemberModal(btn.dataset.member); });
   });
@@ -3073,6 +3105,7 @@ function drawRemExcel(body){
   state.remitos.forEach(r=>(r.vinc||[]).forEach(v=>{ usadoPor[v.key] = r.id; }));
 
   const filas = {pendientes:[], confirmadas:[]};
+  const imprimir = {pendientes:[], confirmadas:[]};
   lineas.forEach(r=>{
     const need = N(r.cant), vinc = r.vinc || [], todos = !!stk.xlAll[r.id];
     const desde = addDaysStr(r.fecha, -stk.antes), lim = addDaysStr(r.fecha, stk.tol);
@@ -3122,16 +3155,18 @@ function drawRemExcel(body){
     const fila = `<tr style="cursor:default;"><td class="mono">${escapeHtml(r.numero)}</td><td class="mono">${escapeHtml(fa(r.fecha))}</td><td>${escapeHtml(r.material)}${r.destino?`<br><span style="font-size:11.5px;color:var(--ink-soft);">${escapeHtml(r.destino)}</span>`:""}</td><td>${r.cant}</td>
       <td><span class="badge ${ST_BADGE[st]}">${label}</span></td><td style="white-space:normal;min-width:380px;">${fuera?`<div style="font-size:12px;color:var(--amber);margin-bottom:5px;">Nada entre ${desde} y ${lim}. Lo más cercano de este producto:</div>`:""}${items}${verTodo}</td></tr>`;
     filas[st==="ok"?"confirmadas":"pendientes"].push(fila);
+    imprimir[st==="ok"?"confirmadas":"pendientes"].push({r, label, movs: lista.filter(c=>st==="ok"?keys.has(c.e.key):true).map(c=>({e:c.e, chk:keys.has(c.e.key)}))});
   });
 
   stk.xlConcView=stk.xlConcView||"pendientes";
   const remHeaders=["Remito","Fecha","Producto del remito","Cant.","Estado","Movimientos del Excel (tildá los que corresponden)"];
   const remTable=tbl(remHeaders,filas[stk.xlConcView].join("")||`<tr><td colspan="6" style="text-align:center;color:var(--ink-soft);padding:18px;">No hay líneas ${stk.xlConcView==="confirmadas"?"confirmadas":"pendientes de confirmar"} con estos filtros.</td></tr>`);
   const remTabs=`<div class="xl-mode-tabs" role="tablist" aria-label="Estado de conciliación"><button class="xl-mode-tab ${stk.xlConcView==="pendientes"?"is-active":""}" role="tab" aria-selected="${stk.xlConcView==="pendientes"}" data-xl-conc-view="pendientes"><b>Salidas a confirmar</b><small>${filas.pendientes.length} líneas pendientes o parciales</small></button><button class="xl-mode-tab ${stk.xlConcView==="confirmadas"?"is-active":""}" role="tab" aria-selected="${stk.xlConcView==="confirmadas"}" data-xl-conc-view="confirmadas"><b>Salidas confirmadas</b><small>${filas.confirmadas.length} líneas completas</small></button></div>`;
-  body.innerHTML = html + `<div class="xl-primary-heading"><h2>Conciliar remitos con Movimientos</h2><p>Revisá las salidas sugeridas y tildá las que correspondan a cada línea del remito.</p></div>${xlRemFilters}${remTabs}${remTable}`;
+  body.innerHTML = html + `<div class="xl-primary-heading"><h2>Conciliar remitos con Movimientos</h2><p>Revisá las salidas sugeridas y tildá las que correspondan a cada línea del remito.</p></div>${xlRemFilters}${remTabs}<div style="margin:8px 0;"><button class="btn ghost small" id="xlPrint">🖨 Imprimir ${stk.xlConcView==="confirmadas"?"salidas confirmadas":"salidas a confirmar"}</button></div>${remTable}`;
   const concTable=body.querySelector("table.data");if(concTable)concTable.classList.add("xl-conciliation");
   body.querySelectorAll("[data-xl-conc-view]").forEach(b=>b.onclick=()=>{stk.xlConcView=b.dataset.xlConcView;drawRemExcel(body);});
   body.querySelector("#xlGo").onclick = xlCargar;
+  body.querySelector("#xlPrint").onclick = ()=>imprimirSalidas(stk.xlConcView, imprimir[stk.xlConcView]);
   ["xlRemNumero","xlRemFecha","xlRemDestino","xlRemSortBy","xlRemSortDir"].forEach(id=>body.querySelector("#"+id).onchange=e=>{const k={xlRemNumero:"xlRemNumero",xlRemFecha:"xlRemFecha",xlRemDestino:"xlRemDestino",xlRemSortBy:"xlRemSortBy",xlRemSortDir:"xlRemSortDir"}[id];stk[k]=e.target.value;drawStockBody();});
   body.querySelector("#xlRemClear").onclick=()=>{stk.xlRemNumero=stk.xlRemFecha=stk.xlRemDestino="";drawStockBody();};
   body.querySelector("#xlTol").oninput = e=>{ stk.tol = Math.max(0, parseInt(e.target.value)||0); drawRemExcel(body); };
@@ -3145,6 +3180,35 @@ function drawRemExcel(body){
     else if(!c.checked && i!==-1) r.vinc.splice(i,1);
     save(); drawStockBody();
   });
+}
+
+function imprimirSalidas(vista, datos){
+  const titulo = vista==="confirmadas" ? "Salidas confirmadas" : "Salidas a confirmar";
+  if(!datos.length){ alert("No hay líneas para imprimir en esta vista."); return; }
+  const esc = escapeHtml;
+  const filasHtml = datos.map(d=>{
+    const movs = d.movs.length ? d.movs.map(m=>`<div class="mv">${m.chk?"☑":"☐"} <b>${esc(stDisplayDate(m.e.f)||"s/fecha")} ${esc(m.e.h||"")}</b> · ${esc(m.e.tipo)} · ${esc(m.e.desc)} · <b>${m.e.cant} ${esc(m.e.unidad)}</b> · Obra: ${esc(m.e.obra||"—")} · ${esc(m.e.resp||"—")}</div>`).join("") : "—";
+    return `<tr><td>${esc(d.r.numero)}</td><td>${esc(fa(d.r.fecha))}</td><td>${esc(d.r.material)}${d.r.destino?`<br><small>${esc(d.r.destino)}</small>`:""}</td><td class="c">${d.r.cant}</td><td>${esc(d.label)}</td><td>${movs}</td></tr>`;
+  }).join("");
+  const w = window.open("","_blank");
+  if(!w){ alert("El navegador bloqueó la ventana de impresión. Permití las ventanas emergentes para este sitio."); return; }
+  w.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>${esc(titulo)}</title><style>
+    @page{size:A4 landscape;margin:12mm}
+    body{font-family:Arial,sans-serif;font-size:11px;color:#111}
+    h1{font-size:16px;margin:0 0 2px} .sub{color:#555;margin-bottom:10px}
+    table{width:100%;border-collapse:collapse}
+    thead{display:table-header-group}
+    th{background:#1C2333;color:#fff;text-align:left;padding:6px;font-size:10.5px}
+    td{border:1px solid #ccc;padding:5px 6px;vertical-align:top}
+    tr{page-break-inside:avoid}
+    td.c{text-align:center} small{color:#555} .mv{margin-bottom:3px}
+    th,thead{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  </style></head><body>
+    <h1>${esc(titulo)} — Remitos vs Excel</h1>
+    <div class="sub">${esc(state.projectName||"")} · ${esc(new Date().toLocaleString("es-AR"))} · ${datos.length} línea(s)</div>
+    <table><thead><tr><th style="width:7%">Remito</th><th style="width:8%">Fecha</th><th style="width:20%">Producto</th><th style="width:5%">Cant.</th><th style="width:14%">Estado</th><th>Movimientos del Excel</th></tr></thead><tbody>${filasHtml}</tbody></table>
+  </body></html>`);
+  w.document.close(); w.focus(); setTimeout(()=>w.print(),300);
 }
 
 function xlDrawBusq(){
