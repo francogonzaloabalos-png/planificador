@@ -104,7 +104,7 @@ input,select,textarea{font-family:inherit;font-size:13px;}
 .sidebar-collapsed .nav button{justify-content:center;padding:10px 4px;font-size:0;position:relative}
 .sidebar-collapsed .nav button .dot{display:none}
 .sidebar-collapsed .nav button:after{width:30px;height:30px;display:grid;place-items:center;border-radius:8px;background:rgba(255,255,255,.08);color:rgba(255,255,255,.9);font-size:11px;font-weight:700;letter-spacing:.02em}
-.sidebar-collapsed .nav button:nth-child(1):after{content:"G"}.sidebar-collapsed .nav button:nth-child(2):after{content:"T"}.sidebar-collapsed .nav button:nth-child(3):after{content:"L"}.sidebar-collapsed .nav button:nth-child(4):after{content:"E"}.sidebar-collapsed .nav button:nth-child(5):after{content:"B"}.sidebar-collapsed .nav button:nth-child(6):after{content:"I"}.sidebar-collapsed .nav button:nth-child(7):after{content:"D"}.sidebar-collapsed .nav button:nth-child(8):after{content:"S"}.sidebar-collapsed .nav button:nth-child(9):after{content:"R"}.sidebar-collapsed .nav button:nth-child(10):after{content:"A"}
+.sidebar-collapsed .nav button:nth-child(1):after{content:"G"}.sidebar-collapsed .nav button:nth-child(2):after{content:"T"}.sidebar-collapsed .nav button:nth-child(3):after{content:"L"}.sidebar-collapsed .nav button:nth-child(4):after{content:"E"}.sidebar-collapsed .nav button:nth-child(5):after{content:"B"}.sidebar-collapsed .nav button:nth-child(6):after{content:"I"}.sidebar-collapsed .nav button:nth-child(7):after{content:"D"}.sidebar-collapsed .nav button:nth-child(8):after{content:"S"}.sidebar-collapsed .nav button:nth-child(9):after{content:"R"}.sidebar-collapsed .nav button:nth-child(10):after{content:"A"}.sidebar-collapsed .nav button:nth-child(11):after{content:"N"}
 .sidebar-collapsed .nav button.active:after{background:rgba(255,255,255,.2);color:#fff}
 .sidebar-collapsed .nav-label{display:none}
 .sidebar-collapsed .nav button .badge{position:absolute;top:2px;right:2px;font-size:9px;padding:1px 4px}
@@ -537,6 +537,7 @@ table.xl-conciliation tbody td:nth-child(-n+5){position:sticky;top:10px;vertical
       <button data-view="stock"><span class="dot"></span><span class="nav-label">Stock y remitos</span></button>
       <button data-view="plantilla"><span class="dot"></span><span class="nav-label">Plantilla de relevamiento</span></button>
       <button data-view="alertas"><span class="dot"></span><span class="nav-label">Alertas</span><span id="altBadge" class="badge atrasado" style="display:none"></span></button>
+      <button data-view="notas"><span class="dot"></span><span class="nav-label">Notas</span></button>
     </nav>
     <div class="sync-status" id="syncStatus"><span class="sync-dot" id="syncDot"></span><span id="syncText">Sincronización no configurada</span></div>
     <div class="sidebar-foot" style="flex-wrap:wrap;">
@@ -713,6 +714,24 @@ table.xl-conciliation tbody td:nth-child(-n+5){position:sticky;top:10px;vertical
       <div></div>
       <div style="display:flex;gap:8px;">
         <button class="btn ghost" id="syncCancel">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: nota -->
+<div class="overlay" id="noteOverlay">
+  <div class="modal" style="width:540px;">
+    <div class="mtitle"><span id="noteModalTitle">Nueva nota</span><button id="noteClose" type="button">&times;</button></div>
+    <div class="mbody">
+      <div class="field"><label>Fecha</label><input type="date" id="n_date"></div>
+      <div class="field"><label>Nota (texto libre)</label><textarea id="n_text" rows="10" placeholder="Escribí notas, observaciones, pendientes o novedades del día..."></textarea></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn danger" id="noteDelete" type="button">Eliminar</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn ghost" id="noteCancel" type="button">Cancelar</button>
+        <button class="btn accent" id="noteSave" type="button">Guardar</button>
       </div>
     </div>
   </div>
@@ -898,7 +917,7 @@ function connectFirebase(config, room){
       document.getElementById("projectName").value = state.projectName || "Proyecto sin nombre";
 
       const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName) && viewEl.contains(document.activeElement);
-      if(editingTaskId){ /* modal abierto: no tocar */ }
+      if(editingTaskId || editingNoteId){ /* modal abierto: no tocar */ }
       else if(currentView==="indicators") refreshIndLists();
       else if(currentView==="stock" && stk.tab==="xl") drawRemExcel(el("stBody"));
       else if(currentView==="alertas") renderAlertas();
@@ -1019,7 +1038,7 @@ document.querySelectorAll(".nav button").forEach(btn=>{
     document.querySelectorAll(".nav button").forEach(b=>b.classList.remove("active"));
     btn.classList.add("active");
     currentView = btn.dataset.view;
-const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal", indicators:"Registro de indicadores", dashboard:"Dashboard de indicadores", stock:"Stock y remitos", plantilla:"Plantilla de relevamiento", alertas:"Alertas de integridad"};
+const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal", indicators:"Registro de indicadores", dashboard:"Dashboard de indicadores", stock:"Stock y remitos", plantilla:"Plantilla de relevamiento", alertas:"Alertas de integridad", notas:"Notas"};
     el("viewTitle").textContent = titles[currentView];
     render();
   });
@@ -1050,6 +1069,7 @@ function render(){
   else if(currentView==="stock") renderStock();
   else if(currentView==="plantilla") renderPlantilla();
   else if(currentView==="alertas") renderAlertas();
+  else if(currentView==="notas") renderNotas();
 }
 
 /* ================= GANTT ================= */
@@ -1971,7 +1991,7 @@ function escapeHtml(str){
 function escapeAttr(str){ return escapeHtml(str); }
 
 /* ================= INDICADORES ================= */
-function normalize(s){ s.indicators = s.indicators || []; s.tasks = s.tasks || []; s.stages = s.stages || []; s.members = s.members || []; s.remitos = s.remitos || []; s.movs = s.movs || []; s.conteos = s.conteos || []; return s; }
+function normalize(s){ s.indicators = s.indicators || []; s.tasks = s.tasks || []; s.stages = s.stages || []; s.members = s.members || []; s.remitos = s.remitos || []; s.movs = s.movs || []; s.conteos = s.conteos || []; s.notas = Array.isArray(s.notas) ? s.notas : []; return s; }
 
 const N = v => parseFloat(v) || 0;
 const toMin = t => { if(!t) return null; const [h,m] = t.split(":").map(Number); return h*60+m; };
@@ -3253,6 +3273,234 @@ function xlDrawBusq(){
     (ps.length ? `<h3 style="margin:10px 0 6px;font-size:13.5px;">Stock actual</h3>` + tbl(["ID","Zona","Producto","Stock","Mínimo","Estado","Ubicación"], filasP) : "") +
     (ms.length ? `<h3 style="margin:14px 0 6px;font-size:13.5px;">Movimientos</h3>` + tbl(["Fecha","Hora","Tipo","Producto","Cantidad","Obra","Responsable","Pedido / Envío"], filasM) : "");
 }
+
+/* ================= NOTAS ================= */
+let editingNoteId = null;
+const noteFilters = { date: "", search: "" };
+
+const dayNamesFull = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+function fmtDayTitle(dateStr){
+  if(!dateStr) return "Sin fecha";
+  try{
+    const d = parseDate(dateStr);
+    const dow = dayNamesFull[d.getDay()] || "";
+    return `${dow} ${fa(dateStr)}`;
+  }catch(e){
+    return fa(dateStr);
+  }
+}
+
+function renderNotas(){
+  state.notas = Array.isArray(state.notas) ? state.notas : [];
+  
+  let lista = state.notas.slice();
+  if(noteFilters.date){
+    lista = lista.filter(n => n.fecha === noteFilters.date);
+  }
+  if(noteFilters.search){
+    const q = noteFilters.search.toLowerCase().trim();
+    lista = lista.filter(n => (n.texto||"").toLowerCase().includes(q) || (n.fecha||"").includes(q));
+  }
+  
+  // Ordenar por fecha descendente (lo más nuevo primero)
+  lista.sort((a,b) => (b.fecha||"").localeCompare(a.fecha||""));
+
+  const hasFilters = !!(noteFilters.date || noteFilters.search);
+
+  let html = `
+    <div class="filters" style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="btn accent small" id="addNoteBtn">+ Nueva nota</button>
+        <input type="date" id="noteFilterDate" value="${escapeAttr(noteFilters.date)}" title="Filtrar por fecha específica" style="border:1px solid var(--line);border-radius:var(--radius);padding:6px 10px;background:var(--surface);">
+        <input type="text" id="noteFilterSearch" value="${escapeAttr(noteFilters.search)}" placeholder="Buscar en texto..." style="border:1px solid var(--line);border-radius:var(--radius);padding:6px 10px;background:var(--surface);min-width:200px;">
+        ${hasFilters ? `<button class="btn ghost small" id="clearNoteFilters">Limpiar filtros</button>` : ''}
+      </div>
+      <div style="font-size:12.5px;color:var(--ink-soft);">
+        <b>${lista.length}</b> nota(s) ${hasFilters ? '(filtradas)' : ''}
+      </div>
+    </div>
+  `;
+
+  if(state.notas.length === 0){
+    html += `
+      <div class="empty">
+        Todavía no hay notas guardadas.<br>
+        <button class="btn accent" id="addFirstNote" style="margin-top:12px;">+ Escribir la primera nota</button>
+      </div>
+    `;
+  } else if(lista.length === 0){
+    html += `
+      <div class="empty">
+        No se encontraron notas con los filtros aplicados.<br>
+        <button class="btn ghost small" id="clearEmptyNoteFilters" style="margin-top:12px;">Limpiar filtros</button>
+      </div>
+    `;
+  } else {
+    html += `<div style="display:flex;flex-direction:column;gap:12px;">`;
+    const hoy = todayStr();
+    lista.forEach(n => {
+      const isToday = n.fecha === hoy;
+      html += `
+        <div class="note-card" data-note-id="${n.id}" style="background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);overflow:hidden;cursor:pointer;">
+          <div style="background:var(--line-soft);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);gap:8px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-weight:600;font-size:13.5px;color:var(--ink);">📅 ${escapeHtml(fmtDayTitle(n.fecha))}</span>
+              ${isToday ? `<span class="badge en_curso">Hoy</span>` : ''}
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <button class="btn ghost small edit-note" data-id="${n.id}" title="Editar nota" style="display:inline-flex;align-items:center;gap:5px;">
+                <span>✏️</span><span>Editar</span>
+              </button>
+              <button class="btn ghost small del-note" data-id="${n.id}" title="Eliminar nota" style="color:var(--red);">✕</button>
+            </div>
+          </div>
+          <div style="padding:14px 16px;white-space:pre-wrap;word-break:break-word;font-size:13.5px;line-height:1.6;color:var(--ink);min-height:50px;">${escapeHtml(n.texto||"").trim() || '<span style="color:var(--ink-soft);font-style:italic;">Nota vacía. Tocá el lápiz de editar (✏️) para escribir.</span>'}</div>
+        </div>
+      `;
+    });
+    html += `</div>`;
+  }
+
+  viewEl.innerHTML = html;
+
+  if(el("addNoteBtn")) el("addNoteBtn").onclick = ()=> openNoteModal(null);
+  if(el("addFirstNote")) el("addFirstNote").onclick = ()=> openNoteModal(null);
+
+  if(el("noteFilterDate")){
+    el("noteFilterDate").onchange = (e)=>{ noteFilters.date = e.target.value; renderNotas(); };
+  }
+  if(el("noteFilterSearch")){
+    el("noteFilterSearch").oninput = (e)=>{ noteFilters.search = e.target.value; renderNotas(); };
+  }
+  if(el("clearNoteFilters")){
+    el("clearNoteFilters").onclick = ()=>{ noteFilters.date = ""; noteFilters.search = ""; renderNotas(); };
+  }
+  if(el("clearEmptyNoteFilters")){
+    el("clearEmptyNoteFilters").onclick = ()=>{ noteFilters.date = ""; noteFilters.search = ""; renderNotas(); };
+  }
+
+  viewEl.querySelectorAll(".edit-note").forEach(btn => {
+    btn.onclick = (e)=>{
+      e.stopPropagation();
+      openNoteModal(btn.dataset.id);
+    };
+  });
+
+  viewEl.querySelectorAll(".del-note").forEach(btn => {
+    btn.onclick = (e)=>{
+      e.stopPropagation();
+      if(!confirm("¿Eliminar la nota de este día?")) return;
+      const id = btn.dataset.id;
+      state.notas = (state.notas || []).filter(x => x.id !== id);
+      save();
+      renderNotas();
+    };
+  });
+
+  viewEl.querySelectorAll(".note-card").forEach(card => {
+    card.onclick = (e)=>{
+      if(e.target.closest("button")) return;
+      openNoteModal(card.dataset.noteId);
+    };
+  });
+}
+
+function openNoteModal(noteId){
+  editingNoteId = noteId;
+  const isNew = !noteId;
+  el("noteModalTitle").textContent = isNew ? "Nueva nota" : "Editar nota";
+  el("noteDelete").style.display = isNew ? "none" : "inline-block";
+
+  if(isNew){
+    const d = noteFilters.date || todayStr();
+    const existing = (state.notas || []).find(x => x.fecha === d);
+    if(existing){
+      editingNoteId = existing.id;
+      el("noteModalTitle").textContent = "Editar nota";
+      el("noteDelete").style.display = "inline-block";
+      el("n_date").value = existing.fecha;
+      el("n_text").value = existing.texto || "";
+    } else {
+      el("n_date").value = d;
+      el("n_text").value = "";
+    }
+  } else {
+    const n = (state.notas || []).find(x => x.id === noteId);
+    if(!n) return;
+    el("n_date").value = n.fecha || todayStr();
+    el("n_text").value = n.texto || "";
+  }
+
+  el("noteOverlay").classList.add("show");
+  setTimeout(()=> el("n_text").focus(), 60);
+}
+
+function closeNoteModal(){
+  editingNoteId = null;
+  el("noteOverlay").classList.remove("show");
+}
+
+el("noteClose").onclick = el("noteCancel").onclick = closeNoteModal;
+
+el("noteSave").onclick = ()=>{
+  const fecha = el("n_date").value;
+  if(!fecha){ alert("Por favor seleccioná una fecha."); return; }
+  const texto = el("n_text").value;
+
+  state.notas = Array.isArray(state.notas) ? state.notas : [];
+
+  if(editingNoteId){
+    const existingOther = state.notas.find(x => x.fecha === fecha && x.id !== editingNoteId);
+    if(existingOther){
+      existingOther.texto = (existingOther.texto ? existingOther.texto + "\n\n" : "") + texto;
+      existingOther.updatedAt = Date.now();
+      state.notas = state.notas.filter(x => x.id !== editingNoteId);
+    } else {
+      const n = state.notas.find(x => x.id === editingNoteId);
+      if(n){
+        n.fecha = fecha;
+        n.texto = texto;
+        n.updatedAt = Date.now();
+      }
+    }
+  } else {
+    const existing = state.notas.find(x => x.fecha === fecha);
+    if(existing){
+      existing.texto = (existing.texto ? existing.texto + "\n\n" : "") + texto;
+      existing.updatedAt = Date.now();
+    } else {
+      state.notas.push({
+        id: uid(),
+        fecha: fecha,
+        texto: texto,
+        updatedAt: Date.now()
+      });
+    }
+  }
+
+  save();
+  closeNoteModal();
+  if(currentView === "notas") renderNotas();
+  else render();
+};
+
+el("noteDelete").onclick = ()=>{
+  if(editingNoteId && confirm("¿Eliminar la nota de este día?")){
+    state.notas = (state.notas || []).filter(x => x.id !== editingNoteId);
+    save();
+    closeNoteModal();
+    if(currentView === "notas") renderNotas();
+    else render();
+  }
+};
+
+el("n_text").addEventListener("keydown", (e)=>{
+  if((e.ctrlKey || e.metaKey) && e.key === "Enter"){
+    e.preventDefault();
+    el("noteSave").click();
+  }
+});
+
 /* init */
 el("projectName").value = state.projectName || "Proyecto sin nombre";
 initSyncUI();
