@@ -3207,8 +3207,15 @@ function imprimirSalidas(vista, datos){
   if(!datos.length){ alert("No hay líneas para imprimir en esta vista."); return; }
   const esc = escapeHtml;
   const filasHtml = datos.map(d=>{
-    const movs = d.movs.length ? d.movs.map(m=>`<div class="mv">${m.chk?"☑":"☐"} <b>${esc(stDisplayDate(m.e.f)||"s/fecha")} ${esc(m.e.h||"")}</b> · ${esc(m.e.tipo)} · ${esc(m.e.desc)} · <b>${m.e.cant} ${esc(m.e.unidad)}</b> · Obra: ${esc(m.e.obra||"—")} · ${esc(m.e.resp||"—")}</div>`).join("") : "—";
-    return `<tr><td>${esc(d.r.numero)}</td><td>${esc(fa(d.r.fecha))}</td><td>${esc(d.r.material)}${d.r.destino?`<br><small>${esc(d.r.destino)}</small>`:""}</td><td class="c">${d.r.cant}</td><td>${esc(d.label)}</td><td>${movs}</td></tr>`;
+    const movs = d.movs.length ? d.movs.map(m=>`<div class="mv">${m.chk?"☑":"☐"} <b>${esc(stDisplayDate(m.e.f)||"s/fecha")} ${esc(m.e.h||"")}</b> · ${esc(m.e.tipo)} · ${[m.e.fam,m.e.marca,m.e.desc].filter(Boolean).map(esc).join(" · ")} · <b>${m.e.cant} ${esc(m.e.unidad)}</b> · Obra: ${esc(m.e.obra||"—")} · ${esc(m.e.resp||"—")}</div>`).join("") : "—";
+    const productosStock = vista==="confirmadas" ? [...new Map(d.movs.map(({e})=>{
+      const nombre=[e.fam,e.marca,e.desc].filter(Boolean).join(" · ");
+      return [nombre.trim().toLocaleLowerCase(), nombre];
+    }).filter(([key])=>key))].map(([,nombre])=>nombre) : [];
+    const producto = productosStock.length
+      ? `<b>${productosStock.map(esc).join("<br>")}</b>${d.r.material?`<br><small>Material indicado en remito: ${esc(d.r.material)}</small>`:""}`
+      : esc(d.r.material);
+    return `<tr><td>${esc(d.r.numero)}</td><td>${esc(fa(d.r.fecha))}</td><td>${producto}${d.r.destino?`<br><small>${esc(d.r.destino)}</small>`:""}</td><td class="c">${d.r.cant}</td><td>${esc(d.label)}</td><td>${movs}</td></tr>`;
   }).join("");
   const w = window.open("","_blank");
   if(!w){ alert("El navegador bloqueó la ventana de impresión. Permití las ventanas emergentes para este sitio."); return; }
