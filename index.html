@@ -105,6 +105,7 @@ input,select,textarea{font-family:inherit;font-size:13px;}
 .sidebar-collapsed .nav button .dot{display:none}
 .sidebar-collapsed .nav button:after{width:30px;height:30px;display:grid;place-items:center;border-radius:8px;background:rgba(255,255,255,.08);color:rgba(255,255,255,.9);font-size:11px;font-weight:700;letter-spacing:.02em}
 .sidebar-collapsed .nav button:nth-child(1):after{content:"G"}.sidebar-collapsed .nav button:nth-child(2):after{content:"T"}.sidebar-collapsed .nav button:nth-child(3):after{content:"L"}.sidebar-collapsed .nav button:nth-child(4):after{content:"E"}.sidebar-collapsed .nav button:nth-child(5):after{content:"B"}.sidebar-collapsed .nav button:nth-child(6):after{content:"I"}.sidebar-collapsed .nav button:nth-child(7):after{content:"D"}.sidebar-collapsed .nav button:nth-child(8):after{content:"S"}.sidebar-collapsed .nav button:nth-child(9):after{content:"R"}.sidebar-collapsed .nav button:nth-child(10):after{content:"A"}.sidebar-collapsed .nav button:nth-child(11):after{content:"N"}
+.sidebar-collapsed .nav button:nth-child(12):after{content:"3"}
 .sidebar-collapsed .nav button.active:after{background:rgba(255,255,255,.2);color:#fff}
 .sidebar-collapsed .nav-label{display:none}
 .sidebar-collapsed .nav button .badge{position:absolute;top:2px;right:2px;font-size:9px;padding:1px 4px}
@@ -538,6 +539,7 @@ table.xl-conciliation tbody td:nth-child(-n+5){position:sticky;top:10px;vertical
       <button data-view="plantilla"><span class="dot"></span><span class="nav-label">Plantilla de relevamiento</span></button>
       <button data-view="alertas"><span class="dot"></span><span class="nav-label">Alertas</span><span id="altBadge" class="badge atrasado" style="display:none"></span></button>
       <button data-view="notas"><span class="dot"></span><span class="nav-label">Notas</span></button>
+      <button data-view="disenos"><span class="dot"></span><span class="nav-label">Diseños 3D</span></button>
     </nav>
     <div class="sync-status" id="syncStatus"><span class="sync-dot" id="syncDot"></span><span id="syncText">Sincronización no configurada</span></div>
     <div class="sidebar-foot" style="flex-wrap:wrap;">
@@ -917,7 +919,7 @@ function connectFirebase(config, room){
       document.getElementById("projectName").value = state.projectName || "Proyecto sin nombre";
 
       const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName) && viewEl.contains(document.activeElement);
-      if(editingTaskId || editingNoteId){ /* modal abierto: no tocar */ }
+      if(editingTaskId || editingNoteId || (currentView==="disenos" && dis.openId)){ /* modal o editor 3D abierto: no tocar */ }
       else if(currentView==="indicators") refreshIndLists();
       else if(currentView==="stock" && stk.tab==="xl") drawRemExcel(el("stBody"));
       else if(currentView==="alertas") renderAlertas();
@@ -1038,7 +1040,7 @@ document.querySelectorAll(".nav button").forEach(btn=>{
     document.querySelectorAll(".nav button").forEach(b=>b.classList.remove("active"));
     btn.classList.add("active");
     currentView = btn.dataset.view;
-const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal", indicators:"Registro de indicadores", dashboard:"Dashboard de indicadores", stock:"Stock y remitos", plantilla:"Plantilla de relevamiento", alertas:"Alertas de integridad", notas:"Notas"};
+const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal", indicators:"Registro de indicadores", dashboard:"Dashboard de indicadores", stock:"Stock y remitos", plantilla:"Plantilla de relevamiento", alertas:"Alertas de integridad", notas:"Notas", disenos:"Diseños 3D"};
     el("viewTitle").textContent = titles[currentView];
     render();
   });
@@ -1070,6 +1072,7 @@ function render(){
   else if(currentView==="plantilla") renderPlantilla();
   else if(currentView==="alertas") renderAlertas();
   else if(currentView==="notas") renderNotas();
+  else if(currentView==="disenos") renderDisenos();
 }
 
 /* ================= GANTT ================= */
@@ -1991,7 +1994,7 @@ function escapeHtml(str){
 function escapeAttr(str){ return escapeHtml(str); }
 
 /* ================= INDICADORES ================= */
-function normalize(s){ s.indicators = s.indicators || []; s.tasks = s.tasks || []; s.stages = s.stages || []; s.members = s.members || []; s.remitos = s.remitos || []; s.movs = s.movs || []; s.conteos = s.conteos || []; s.notas = Array.isArray(s.notas) ? s.notas : []; return s; }
+function normalize(s){ s.indicators = s.indicators || []; s.tasks = s.tasks || []; s.stages = s.stages || []; s.members = s.members || []; s.remitos = s.remitos || []; s.movs = s.movs || []; s.conteos = s.conteos || []; s.notas = Array.isArray(s.notas) ? s.notas : []; s.disenos = Array.isArray(s.disenos) ? s.disenos : []; return s; }
 
 const N = v => parseFloat(v) || 0;
 const toMin = t => { if(!t) return null; const [h,m] = t.split(":").map(Number); return h*60+m; };
@@ -3505,6 +3508,94 @@ el("n_text").addEventListener("keydown", (e)=>{
   if((e.ctrlKey || e.metaKey) && e.key === "Enter"){
     e.preventDefault();
     el("noteSave").click();
+  }
+});
+
+/* ================= DISEÑOS 3D ================= */
+const EDITOR_3D_URL = "editor3d.html";   // mismo directorio que el planificador
+const dis = {openId:null};
+
+function disList(){ state.disenos = Array.isArray(state.disenos) ? state.disenos : []; return state.disenos; }
+function disFind(id){ return disList().find(d=>d.id===id); }
+function disStamp(ts){ return ts ? new Date(ts).toLocaleString("es-AR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "—"; }
+/* Firebase descarta los arrays vacíos, por eso se usa "touched" y "start" para saber si arrancar en blanco o con el plano base */
+function disLoadPayload(d){
+  const o = d.objects;
+  if(Array.isArray(o) && o.length) return o;
+  return (d.touched || d.start==="blank") ? [] : null;   // null = plano base de RPM
+}
+
+function renderDisenos(){
+  if(dis.openId && disFind(dis.openId)){ renderDisenoEditor(disFind(dis.openId)); return; }
+  dis.openId = null;
+  const lista = disList().slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
+  viewEl.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
+      <button class="btn accent small" id="disNew">+ Crear diseño</button>
+      <span style="font-size:12.5px;color:var(--ink-soft);"><b>${lista.length}</b> diseño(s)</span></div>
+    ${lista.length ? `<div class="team-grid">${lista.map(d=>`<div class="member-card" data-id="${d.id}">
+        <div class="mname" style="margin-bottom:4px;">${escapeHtml(d.name)}</div>
+        <div class="mload">${(d.objects||[]).length} elemento(s)</div>
+        <div class="mload">Modificado: ${disStamp(d.updatedAt)}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;">
+          <button class="btn accent small dis-open">Abrir</button>
+          <button class="btn ghost small dis-rename">Renombrar</button>
+          <button class="btn ghost small dis-dup">Duplicar</button>
+          <button class="btn ghost small dis-del" style="color:var(--red);">Eliminar</button>
+        </div></div>`).join("")}</div>`
+      : `<div class="empty">Todavía no hay diseños.<br><button class="btn accent" id="disNewEmpty">Crear el primer diseño</button></div>`}`;
+
+  const crear = ()=>{
+    const name = (prompt("Nombre del nuevo diseño:","Diseño "+(disList().length+1))||"").trim();
+    if(!name) return;
+    const base = confirm("¿Empezar con el plano base de RPM (depósitos 1 a 6)?\n\nAceptar = plano base\nCancelar = espacio en blanco");
+    const d = {id:uid(), name, objects:[], start:base?"base":"blank", createdAt:Date.now(), updatedAt:Date.now()};
+    disList().push(d); save(); dis.openId = d.id; renderDisenos();
+  };
+  if(el("disNew")) el("disNew").onclick = crear;
+  if(el("disNewEmpty")) el("disNewEmpty").onclick = crear;
+
+  viewEl.querySelectorAll(".member-card[data-id]").forEach(card=>{
+    const id = card.dataset.id;
+    card.querySelector(".dis-open").onclick = ()=>{ dis.openId = id; renderDisenos(); };
+    card.querySelector(".dis-rename").onclick = ()=>{
+      const d = disFind(id); const n = (prompt("Nuevo nombre:", d.name)||"").trim();
+      if(n){ d.name = n; d.updatedAt = Date.now(); save(); renderDisenos(); }
+    };
+    card.querySelector(".dis-dup").onclick = ()=>{
+      const c = JSON.parse(JSON.stringify(disFind(id)));
+      c.id = uid(); c.name += " (copia)"; c.createdAt = c.updatedAt = Date.now();
+      disList().push(c); save(); renderDisenos();
+    };
+    card.querySelector(".dis-del").onclick = ()=>{
+      if(!confirm("¿Eliminar este diseño? No se puede deshacer.")) return;
+      state.disenos = disList().filter(x=>x.id!==id); save(); renderDisenos();
+    };
+  });
+}
+
+function renderDisenoEditor(d){
+  viewEl.innerHTML = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+      <button class="btn ghost small" id="disBack">← Volver a los diseños</button>
+      <b>${escapeHtml(d.name)}</b>
+      <span id="disStatus" style="font-size:12px;color:var(--ink-soft);">Se guarda solo con cada cambio</span>
+      <button class="btn ghost small" id="disFull" style="margin-left:auto;">Pantalla completa</button></div>
+    <iframe id="disFrame" src="${EDITOR_3D_URL}" title="Editor de planos 3D" allowfullscreen
+      style="width:100%;height:calc(100vh - 190px);min-height:480px;border:1px solid var(--line);border-radius:8px;background:#58635f;"></iframe>`;
+  el("disBack").onclick = ()=>{ dis.openId = null; renderDisenos(); };
+  el("disFull").onclick = ()=>{ const f = el("disFrame"); if(f && f.requestFullscreen) f.requestFullscreen(); };
+}
+
+/* Comunicación con el editor embebido */
+window.addEventListener("message", e=>{
+  const fr = el("disFrame");
+  if(!fr || e.source!==fr.contentWindow || !e.data) return;
+  const d = disFind(dis.openId); if(!d) return;
+  if(e.data.type==="rpm-ready"){
+    fr.contentWindow.postMessage({type:"rpm-load", objects:disLoadPayload(d), name:d.name}, "*");
+  } else if(e.data.type==="rpm-save" && Array.isArray(e.data.objects)){
+    d.objects = e.data.objects; d.touched = true; d.updatedAt = Date.now();
+    save();
+    const st = el("disStatus"); if(st) st.textContent = "Guardado automáticamente a las " + nowTime();
   }
 });
 
