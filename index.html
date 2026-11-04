@@ -303,6 +303,29 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
 .dep-arrow.blocked{fill:var(--red);}
 
 .empty{padding:40px 20px;text-align:center;color:var(--ink-soft);}
+/* ================= LINKS ================= */
+.lk-top{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+.lk-sec{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px 16px;margin-bottom:16px;box-shadow:var(--shadow);}
+.lk-sech{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
+.lk-sech h3{margin:0;font-size:15px;flex:1;min-width:120px;overflow-wrap:anywhere;}
+.lk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));grid-auto-rows:minmax(64px,auto);gap:10px;}
+.lk-cell{position:relative;display:flex;}
+.lk-btn{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:10px 30px;border-radius:8px;font-weight:600;font-size:13.5px;line-height:1.3;text-decoration:none;overflow-wrap:anywhere;box-shadow:0 1px 2px rgba(0,0,0,.15);transition:transform .08s,filter .15s;}
+a.lk-btn:hover{filter:brightness(1.08);transform:translateY(-1px);}
+.lk-btn.nourl{opacity:.55;cursor:not-allowed;}
+.lk-edit{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;border:none;background:rgba(255,255,255,.88);color:#333;font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:.85;}
+.lk-edit:hover{opacity:1;background:#fff;}
+.lk-sub{margin-top:16px;padding-top:12px;border-top:1px dashed var(--line);}
+.lk-sech + .lk-sub{margin-top:0;padding-top:0;border-top:none;}
+.lk-subh{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
+.lk-subh h4{margin:0;flex:1;min-width:120px;font-size:13.5px;font-weight:700;color:var(--accent);padding-left:9px;border-left:3px solid var(--accent);overflow-wrap:anywhere;}
+.lk-grid + .lk-sub{margin-top:16px;}
+.lk-none{color:var(--ink-soft);font-size:13px;padding:6px 2px;}
+.lk-swatches{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+.lk-sw{width:26px;height:26px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;}
+.lk-sw.on{border-color:var(--ink);box-shadow:0 0 0 2px #fff inset;}
+.lk-swatches input[type=color]{width:34px;height:28px;padding:0;border:1px solid var(--line);border-radius:6px;background:none;cursor:pointer;}
+@media(max-width:600px){.lk-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));}}
 .empty .btn{margin-top:10px;}
 ::-webkit-scrollbar{height:10px;width:10px;}
 ::-webkit-scrollbar-thumb{background:#D3D7DE;border-radius:5px;}
@@ -540,6 +563,7 @@ table.xl-conciliation tbody td:nth-child(-n+5){position:sticky;top:10px;vertical
       <button data-view="alertas"><span class="dot"></span><span class="nav-label">Alertas</span><span id="altBadge" class="badge atrasado" style="display:none"></span></button>
       <button data-view="notas"><span class="dot"></span><span class="nav-label">Notas</span></button>
       <button data-view="disenos"><span class="dot"></span><span class="nav-label">Diseños 3D</span></button>
+      <button data-view="links"><span class="dot"></span><span class="nav-label">Links</span></button>
     </nav>
     <div class="sync-status" id="syncStatus"><span class="sync-dot" id="syncDot"></span><span id="syncText">Sincronización no configurada</span></div>
     <div class="sidebar-foot" style="flex-wrap:wrap;">
@@ -560,6 +584,20 @@ table.xl-conciliation tbody td:nth-child(-n+5){position:sticky;top:10px;vertical
   </div>
 </div>
 
+<!-- Modal: links -->
+<div class="overlay" id="lkOverlay">
+  <div class="modal">
+    <div class="mtitle"><span id="lkModalTitle">Botón</span><button id="lkClose">&times;</button></div>
+    <div class="mbody">
+      <div class="field"><label id="lkNameLabel">Nombre</label><input id="lkName" maxlength="120" autocomplete="off"></div>
+      <div class="field" id="lkUrlWrap"><label>Dirección (URL)</label><input id="lkUrl" placeholder="https://docs.google.com/spreadsheets/..." autocomplete="off"></div>
+      <div class="field" id="lkSecWrap"><label>Ubicación</label><select id="lkSec"></select></div>
+      <div class="field" id="lkColorWrap"><label>Color del botón</label><div class="lk-swatches" id="lkSwatches"></div></div>
+      <div class="field" id="lkMoveWrap"><label>Orden</label><div style="display:flex;gap:8px;"><button class="btn ghost small" id="lkMoveBack">←</button><button class="btn ghost small" id="lkMoveFwd">→</button></div></div>
+    </div>
+    <div class="mfoot"><button class="btn ghost" id="lkDelete" style="color:var(--red);">Eliminar</button><div style="display:flex;gap:8px;"><button class="btn ghost" id="lkCancel">Cancelar</button><button class="btn accent" id="lkSave">Guardar</button></div></div>
+  </div>
+</div>
 <!-- Modal: tarea -->
 <div class="overlay" id="taskOverlay">
   <div class="modal">
@@ -919,7 +957,7 @@ function connectFirebase(config, room){
       document.getElementById("projectName").value = state.projectName || "Proyecto sin nombre";
 
       const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName) && viewEl.contains(document.activeElement);
-      if(editingTaskId || editingNoteId || (currentView==="disenos" && dis.openId)){ /* modal o editor 3D abierto: no tocar */ }
+      if(editingTaskId || editingNoteId || (currentView==="disenos" && dis.openId) || (currentView==="links" && lk.ctx)){ /* modal o editor 3D abierto: no tocar */ }
       else if(currentView==="indicators") refreshIndLists();
       else if(currentView==="stock" && stk.tab==="xl") drawRemExcel(el("stBody"));
       else if(currentView==="alertas") renderAlertas();
@@ -1040,7 +1078,7 @@ document.querySelectorAll(".nav button").forEach(btn=>{
     document.querySelectorAll(".nav button").forEach(b=>b.classList.remove("active"));
     btn.classList.add("active");
     currentView = btn.dataset.view;
-const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal", indicators:"Registro de indicadores", dashboard:"Dashboard de indicadores", stock:"Stock y remitos", plantilla:"Plantilla de relevamiento", alertas:"Alertas de integridad", notas:"Notas", disenos:"Diseños 3D"};
+const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal", indicators:"Registro de indicadores", dashboard:"Dashboard de indicadores", stock:"Stock y remitos", plantilla:"Plantilla de relevamiento", alertas:"Alertas de integridad", notas:"Notas", disenos:"Diseños 3D", links:"Links y accesos"};
     el("viewTitle").textContent = titles[currentView];
     render();
   });
@@ -1073,6 +1111,7 @@ function render(){
   else if(currentView==="alertas") renderAlertas();
   else if(currentView==="notas") renderNotas();
   else if(currentView==="disenos") renderDisenos();
+  else if(currentView==="links") renderLinks();
 }
 
 /* ================= GANTT ================= */
@@ -1994,7 +2033,7 @@ function escapeHtml(str){
 function escapeAttr(str){ return escapeHtml(str); }
 
 /* ================= INDICADORES ================= */
-function normalize(s){ s.indicators = s.indicators || []; s.tasks = s.tasks || []; s.stages = s.stages || []; s.members = s.members || []; s.remitos = s.remitos || []; s.movs = s.movs || []; s.conteos = s.conteos || []; s.notas = Array.isArray(s.notas) ? s.notas : []; s.disenos = Array.isArray(s.disenos) ? s.disenos : []; return s; }
+function normalize(s){ s.indicators = s.indicators || []; s.tasks = s.tasks || []; s.stages = s.stages || []; s.members = s.members || []; s.remitos = s.remitos || []; s.movs = s.movs || []; s.conteos = s.conteos || []; s.notas = Array.isArray(s.notas) ? s.notas : []; s.disenos = Array.isArray(s.disenos) ? s.disenos : []; s.links = Array.isArray(s.links) ? s.links : []; return s; }
 
 const N = v => parseFloat(v) || 0;
 const toMin = t => { if(!t) return null; const [h,m] = t.split(":").map(Number); return h*60+m; };
@@ -3598,6 +3637,189 @@ window.addEventListener("message", e=>{
     const st = el("disStatus"); if(st) st.textContent = "Guardado automáticamente a las " + nowTime();
   }
 });
+
+/* ================= LINKS (botones de acceso rápido) ================= */
+/* Estructura: sección {id,title,items:[botones sueltos],subs:[{id,title,items:[botones]}]} */
+const lk = {ctx:null, color:"#2F6F5E"};
+const LK_COLORS = ["#2F6F5E","#2563EB","#7C3AED","#DB2777","#DC2626","#EA580C","#CA8A04","#16A34A","#0891B2","#475569","#111827"];
+
+function lkList(){ state.links = Array.isArray(state.links) ? state.links : []; return state.links; }
+function lkItems(box){ box.items = Array.isArray(box.items) ? box.items : []; return box.items; }
+function lkSubs(sec){ sec.subs = Array.isArray(sec.subs) ? sec.subs : []; return sec.subs; }
+function lkSec(id){ return lkList().find(s=>s.id===id); }
+/* contenedor de botones: la sección misma, o una de sus subsecciones */
+function lkBox(secId, subId){ const sec = lkSec(secId); if(!sec) return null; return subId ? (lkSubs(sec).find(x=>x.id===subId) || null) : sec; }
+function lkColor(c){ return /^#[0-9a-f]{6}$/i.test(c||"") ? c : "#2F6F5E"; }
+function lkInk(c){ const n=parseInt(c.slice(1),16), r=n>>16, g=(n>>8)&255, b=n&255; return (0.299*r+0.587*g+0.114*b) > 160 ? "#111827" : "#ffffff"; }
+/* "" = sin URL, null = inválida, string = URL lista (solo http, https o mailto) */
+function lkUrl(u){
+  u = (u||"").trim(); if(!u) return "";
+  if(/^(https?:|mailto:)/i.test(u)) return u;
+  if(/^[a-z][a-z0-9+.\-]*:/i.test(u) && !/^[a-z0-9.\-]+:\d+/i.test(u)) return null;
+  return "https://" + u;
+}
+
+function lkGrid(box, secId, subId){
+  const items = lkItems(box);
+  if(!items.length) return subId ? `<div class="lk-none">Subsección vacía. Agregá un botón con “+ Botón”.</div>` : "";
+  return `<div class="lk-grid">${items.map(it=>{
+    const c = lkColor(it.color), st = `background:${c};color:${lkInk(c)};`;
+    const body = it.url
+      ? `<a class="lk-btn" href="${escapeHtml(it.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(it.url)}" style="${st}">${escapeHtml(it.name)}</a>`
+      : `<span class="lk-btn nourl" title="Todavía no tiene dirección: tocá el lápiz para pegarla" style="${st}">${escapeHtml(it.name)}</span>`;
+    return `<div class="lk-cell" data-s="${escapeHtml(secId)}" data-sub="${escapeHtml(subId||"")}" data-i="${escapeHtml(it.id)}">${body}<button class="lk-edit" title="Editar">✎</button></div>`;
+  }).join("")}</div>`;
+}
+
+function renderLinks(){
+  const secs = lkList();
+  viewEl.innerHTML = `<div class="lk-top"><button class="btn accent small" id="lkNewSec">+ Nueva sección</button>
+      <span style="font-size:12.5px;color:var(--ink-soft);"><b>${secs.length}</b> sección(es) · el lápiz ✎ de cada botón, sección o subsección permite editarlo</span></div>` +
+    (secs.length ? secs.map(sec=>{
+      const subs = lkSubs(sec), hasAny = lkItems(sec).length || subs.length;
+      return `<div class="lk-sec" data-s="${escapeHtml(sec.id)}">
+        <div class="lk-sech"><h3>${escapeHtml(sec.title)}</h3>
+          <button class="btn ghost small lk-sec-edit">✎ Sección</button>
+          <button class="btn ghost small lk-sub-new">+ Subsección</button>
+          <button class="btn accent small lk-add">+ Botón</button></div>
+        ${lkGrid(sec, sec.id, "")}
+        ${subs.map(sub=>`<div class="lk-sub" data-sub="${escapeHtml(sub.id)}">
+          <div class="lk-subh"><h4>${escapeHtml(sub.title)}</h4>
+            <button class="btn ghost small lk-sub-edit">✎</button>
+            <button class="btn accent small lk-sub-add">+ Botón</button></div>
+          ${lkGrid(sub, sec.id, sub.id)}</div>`).join("")}
+        ${hasAny ? "" : `<div class="lk-none">Sección vacía. Agregá botones con “+ Botón” o armá grupos con “+ Subsección”.</div>`}
+      </div>`;
+    }).join("") : `<div class="empty">Todavía no hay links.<br><button class="btn accent" id="lkNewSecEmpty">Crear la primera sección</button></div>`);
+
+  if(el("lkNewSec")) el("lkNewSec").onclick = ()=>openLk({kind:"sec"});
+  if(el("lkNewSecEmpty")) el("lkNewSecEmpty").onclick = ()=>openLk({kind:"sec"});
+  viewEl.querySelectorAll(".lk-sec").forEach(box=>{
+    const secId = box.dataset.s;
+    box.querySelector(".lk-sec-edit").onclick = ()=>openLk({kind:"sec", secId});
+    box.querySelector(".lk-sub-new").onclick = ()=>openLk({kind:"sub", secId});
+    box.querySelector(".lk-add").onclick = ()=>openLk({kind:"item", secId});
+    box.querySelectorAll(".lk-sub").forEach(sb=>{
+      const subId = sb.dataset.sub;
+      sb.querySelector(".lk-sub-edit").onclick = ()=>openLk({kind:"sub", secId, subId});
+      sb.querySelector(".lk-sub-add").onclick = ()=>openLk({kind:"item", secId, subId});
+    });
+    box.querySelectorAll(".lk-cell").forEach(cell=>{
+      cell.querySelector(".lk-edit").onclick = ()=>openLk({kind:"item", secId:cell.dataset.s, subId:cell.dataset.sub||"", itemId:cell.dataset.i});
+    });
+  });
+}
+
+function lkSyncSwatches(){
+  const box = el("lkSwatches");
+  box.innerHTML = LK_COLORS.map(c=>`<button type="button" class="lk-sw${c.toLowerCase()===lk.color.toLowerCase()?" on":""}" data-c="${c}" style="background:${c}" title="${c}"></button>`).join("") +
+    `<input type="color" id="lkColorPick" value="${lk.color}" title="Otro color">`;
+  box.querySelectorAll(".lk-sw").forEach(b=>b.onclick = ()=>{ lk.color = b.dataset.c; lkSyncSwatches(); });
+  el("lkColorPick").oninput = e=>{ lk.color = e.target.value; box.querySelectorAll(".lk-sw").forEach(b=>b.classList.toggle("on", b.dataset.c.toLowerCase()===lk.color.toLowerCase())); };
+}
+
+function openLk(ctx){
+  const kind = ctx.kind, isItem = kind==="item";
+  const sec = ctx.secId ? lkSec(ctx.secId) : null;
+  const sub = (kind==="sub" && ctx.subId && sec) ? lkSubs(sec).find(x=>x.id===ctx.subId) : null;
+  const box = isItem ? lkBox(ctx.secId, ctx.subId) : null;
+  const it = (isItem && ctx.itemId && box) ? lkItems(box).find(i=>i.id===ctx.itemId) : null;
+  if((ctx.secId && !sec) || (kind==="sub" && ctx.subId && !sub) || (isItem && ctx.secId && !box) || (ctx.itemId && !it)) return;
+  lk.ctx = ctx;
+  const existing = isItem ? !!it : (kind==="sub" ? !!sub : !!sec);
+  const label = {sec:["Nueva sección","Editar sección","Título de la sección","Ej: Herramientas"],
+                 sub:["Nueva subsección","Editar subsección","Título de la subsección","Ej: Depósito 4"],
+                 item:["Nuevo botón","Editar botón","Nombre del botón","Ej: Excel herramientas"]}[kind];
+  el("lkModalTitle").textContent = existing ? label[1] : label[0];
+  el("lkNameLabel").textContent = label[2];
+  el("lkName").placeholder = label[3];
+  el("lkName").value = isItem ? (it ? it.name : "") : (kind==="sub" ? (sub ? sub.title : "") : (sec ? sec.title : ""));
+  el("lkUrl").value = it ? (it.url||"") : "";
+  ["lkUrlWrap","lkSecWrap","lkColorWrap"].forEach(id=>el(id).style.display = isItem ? "" : "none");
+  el("lkSec").innerHTML = lkList().map(s=>`<option value="${escapeHtml(s.id)}">${escapeHtml(s.title)}</option>` +
+    lkSubs(s).map(x=>`<option value="${escapeHtml(s.id)}|${escapeHtml(x.id)}">${escapeHtml(s.title)} › ${escapeHtml(x.title)}</option>`).join("")).join("");
+  if(isItem) el("lkSec").value = ctx.secId + (ctx.subId ? "|"+ctx.subId : "");
+  lk.color = it ? lkColor(it.color) : "#2F6F5E";
+  if(isItem) lkSyncSwatches();
+  el("lkMoveWrap").style.display = existing ? "" : "none";
+  el("lkMoveBack").textContent = isItem ? "← Mover antes" : "↑ Subir";
+  el("lkMoveFwd").textContent = isItem ? "Mover después →" : "↓ Bajar";
+  el("lkDelete").style.visibility = existing ? "visible" : "hidden";
+  el("lkOverlay").classList.add("show");
+  setTimeout(()=>{ el("lkName").focus(); el("lkName").select(); }, 0);
+}
+function closeLk(){ lk.ctx = null; el("lkOverlay").classList.remove("show"); }
+
+function lkMove(dir){
+  const ctx = lk.ctx; if(!ctx) return;
+  let arr, idx;
+  if(ctx.kind==="sec"){ arr = lkList(); idx = arr.findIndex(s=>s.id===ctx.secId); }
+  else if(ctx.kind==="sub"){ const sec = lkSec(ctx.secId); if(!sec) return; arr = lkSubs(sec); idx = arr.findIndex(x=>x.id===ctx.subId); }
+  else { const box = lkBox(ctx.secId, ctx.subId); if(!box) return; arr = lkItems(box); idx = arr.findIndex(i=>i.id===ctx.itemId); }
+  const j = idx + dir; if(idx<0 || j<0 || j>=arr.length) return;
+  [arr[idx], arr[j]] = [arr[j], arr[idx]];
+  save(); renderLinks();
+}
+
+el("lkClose").onclick = closeLk;
+el("lkCancel").onclick = closeLk;
+el("lkMoveBack").onclick = ()=>lkMove(-1);
+el("lkMoveFwd").onclick = ()=>lkMove(1);
+["lkName","lkUrl"].forEach(id=>el(id).addEventListener("keydown", e=>{
+  if(e.key==="Enter"){ e.preventDefault(); el("lkSave").click(); }
+  else if(e.key==="Escape"){ closeLk(); }
+}));
+el("lkDelete").onclick = ()=>{
+  const ctx = lk.ctx; if(!ctx) return;
+  const sec = lkSec(ctx.secId); if(!sec) return;
+  if(ctx.kind==="sec"){
+    const n = lkItems(sec).length + lkSubs(sec).reduce((a,x)=>a+lkItems(x).length, 0), m = lkSubs(sec).length;
+    const extra = (m||n) ? ` con ${m} subsección(es) y ${n} botón(es)` : "";
+    if(!confirm(`¿Eliminar la sección "${sec.title}"${extra}? No se puede deshacer.`)) return;
+    state.links = lkList().filter(s=>s.id!==ctx.secId);
+  } else if(ctx.kind==="sub"){
+    const sub = lkSubs(sec).find(x=>x.id===ctx.subId); if(!sub) return;
+    const n = lkItems(sub).length;
+    if(!confirm(`¿Eliminar la subsección "${sub.title}"${n ? " y sus "+n+" botón(es)" : ""}? No se puede deshacer.`)) return;
+    sec.subs = lkSubs(sec).filter(x=>x.id!==ctx.subId);
+  } else {
+    const box = lkBox(ctx.secId, ctx.subId); if(!box) return;
+    if(!confirm("¿Eliminar este botón?")) return;
+    box.items = lkItems(box).filter(i=>i.id!==ctx.itemId);
+  }
+  save(); closeLk(); renderLinks();
+};
+el("lkSave").onclick = ()=>{
+  const ctx = lk.ctx; if(!ctx) return;
+  const name = el("lkName").value.trim();
+  if(!name){ alert("Poné un nombre."); return; }
+  if(ctx.kind==="sec"){
+    if(ctx.secId){ const s = lkSec(ctx.secId); if(s) s.title = name; }
+    else lkList().push({id:uid(), title:name, items:[], subs:[]});
+  } else if(ctx.kind==="sub"){
+    const sec = lkSec(ctx.secId);
+    if(sec){
+      if(ctx.subId){ const x = lkSubs(sec).find(v=>v.id===ctx.subId); if(x) x.title = name; }
+      else lkSubs(sec).push({id:uid(), title:name, items:[]});
+    }
+  } else {
+    const url = lkUrl(el("lkUrl").value);
+    if(url===null){ alert("La dirección tiene que empezar con http:// o https://"); return; }
+    const [tSec, tSub] = el("lkSec").value.split("|");
+    const target = lkBox(tSec, tSub||""), from = lkBox(ctx.secId, ctx.subId||"");
+    if(!target || !from){ closeLk(); renderLinks(); return; }
+    if(ctx.itemId){
+      const idx = lkItems(from).findIndex(i=>i.id===ctx.itemId);
+      if(idx<0){ closeLk(); renderLinks(); return; }
+      const it = lkItems(from)[idx];
+      it.name = name; it.url = url; it.color = lk.color;
+      if(target!==from){ lkItems(from).splice(idx,1); lkItems(target).push(it); }
+    } else {
+      lkItems(target).push({id:uid(), name, url, color:lk.color});
+    }
+  }
+  save(); closeLk(); renderLinks();
+};
 
 /* init */
 el("projectName").value = state.projectName || "Proyecto sin nombre";
