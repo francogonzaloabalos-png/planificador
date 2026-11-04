@@ -325,7 +325,16 @@ a.lk-btn:hover{filter:brightness(1.08);transform:translateY(-1px);}
 .lk-sw{width:26px;height:26px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;}
 .lk-sw.on{border-color:var(--ink);box-shadow:0 0 0 2px #fff inset;}
 .lk-swatches input[type=color]{width:34px;height:28px;padding:0;border:1px solid var(--line);border-radius:6px;background:none;cursor:pointer;}
-@media(max-width:600px){.lk-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));}}
+.lk-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-bottom:16px;}
+.lk-tile{position:relative;display:flex;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);transition:border-color .15s,background .15s,transform .08s;}
+.lk-tile:hover{border-color:var(--accent);transform:translateY(-1px);}
+.lk-tile.on{border-color:var(--accent);background:var(--accent-soft);box-shadow:0 0 0 2px var(--accent) inset;}
+.lk-tile-main{flex:1;min-width:0;text-align:left;border:0;background:none;color:var(--ink);font:inherit;cursor:pointer;padding:12px 38px 12px 14px;display:flex;flex-direction:column;gap:4px;border-radius:8px;}
+.lk-tile-title{font-weight:700;font-size:14px;line-height:1.25;overflow-wrap:anywhere;}
+.lk-tile-meta{font-size:11.5px;color:var(--ink-soft);}
+.lk-tile-copy{position:absolute;top:6px;right:6px;width:26px;height:26px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink-soft);cursor:pointer;font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center;}
+.lk-tile-copy:hover{background:var(--line-soft);color:var(--ink);}
+@media(max-width:600px){.lk-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));}.lk-tiles{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));}}
 .empty .btn{margin-top:10px;}
 ::-webkit-scrollbar{height:10px;width:10px;}
 ::-webkit-scrollbar-thumb{background:#D3D7DE;border-radius:5px;}
@@ -3640,7 +3649,7 @@ window.addEventListener("message", e=>{
 
 /* ================= LINKS (botones de acceso rápido) ================= */
 /* Estructura: sección {id,title,items:[botones sueltos],subs:[{id,title,items:[botones]}]} */
-const lk = {ctx:null, color:"#2F6F5E"};
+const lk = {ctx:null, color:"#2F6F5E", sel:null};
 const LK_COLORS = ["#2F6F5E","#2563EB","#7C3AED","#DB2777","#DC2626","#EA580C","#CA8A04","#16A34A","#0891B2","#475569","#111827"];
 
 function lkList(){ state.links = Array.isArray(state.links) ? state.links : []; return state.links; }
@@ -3671,14 +3680,47 @@ function lkGrid(box, secId, subId){
   }).join("")}</div>`;
 }
 
+/* ---- copiar ---- */
+function lkLine(it){ return it.name + (it.url ? ": " + it.url : ""); }
+function lkSecText(sec){
+  const out = ["Sección: " + sec.title];
+  lkItems(sec).forEach(it=>out.push("  " + lkLine(it)));
+  lkSubs(sec).forEach(sub=>{
+    out.push("", "  Subsección: " + sub.title);
+    lkItems(sub).forEach(it=>out.push("    " + lkLine(it)));
+  });
+  return out.join("\n");
+}
+function lkAllText(){ return lkList().map(lkSecText).join("\n\n"); }
+function lkCopy(text, btn, okLabel){
+  const done = ()=>{ const old = btn.textContent; btn.textContent = okLabel; setTimeout(()=>btn.textContent = old, 1500); };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=> prompt("Copiá manualmente:", text));
+  } else {
+    prompt("Copiá manualmente:", text);
+  }
+}
+function lkCount(sec){ return lkItems(sec).length + lkSubs(sec).reduce((a,x)=>a+lkItems(x).length, 0); }
+
 function renderLinks(){
   const secs = lkList();
-  viewEl.innerHTML = `<div class="lk-top"><button class="btn accent small" id="lkNewSec">+ Nueva sección</button>
-      <span style="font-size:12.5px;color:var(--ink-soft);"><b>${secs.length}</b> sección(es) · el lápiz ✎ de cada botón, sección o subsección permite editarlo</span></div>` +
-    (secs.length ? secs.map(sec=>{
-      const subs = lkSubs(sec), hasAny = lkItems(sec).length || subs.length;
-      return `<div class="lk-sec" data-s="${escapeHtml(sec.id)}">
+  if(!secs.some(s=>s.id===lk.sel)) lk.sel = secs.length ? secs[0].id : null;
+  const cur = secs.find(s=>s.id===lk.sel) || null;
+
+  const tiles = secs.length ? `<div class="lk-tiles">${secs.map(sec=>{
+    const n = lkCount(sec), m = lkSubs(sec).length;
+    return `<div class="lk-tile${sec.id===lk.sel?" on":""}" data-s="${escapeHtml(sec.id)}">
+      <button class="lk-tile-main" title="Abrir sección"><span class="lk-tile-title">${escapeHtml(sec.title)}</span>
+        <span class="lk-tile-meta">${n} link${n===1?"":"s"}${m ? " · "+m+" subsección"+(m===1?"":"es") : ""}</span></button>
+      <button class="lk-tile-copy" title="Copiar esta sección">⧉</button></div>`;
+  }).join("")}</div>` : "";
+
+  let detail = "";
+  if(cur){
+    const sec = cur, subs = lkSubs(sec), hasAny = lkItems(sec).length || subs.length;
+    detail = `<div class="lk-sec" data-s="${escapeHtml(sec.id)}">
         <div class="lk-sech"><h3>${escapeHtml(sec.title)}</h3>
+          <button class="btn ghost small lk-sec-copy">⧉ Copiar sección</button>
           <button class="btn ghost small lk-sec-edit">✎ Sección</button>
           <button class="btn ghost small lk-sub-new">+ Subsección</button>
           <button class="btn accent small lk-add">+ Botón</button></div>
@@ -3690,12 +3732,25 @@ function renderLinks(){
           ${lkGrid(sub, sec.id, sub.id)}</div>`).join("")}
         ${hasAny ? "" : `<div class="lk-none">Sección vacía. Agregá botones con “+ Botón” o armá grupos con “+ Subsección”.</div>`}
       </div>`;
-    }).join("") : `<div class="empty">Todavía no hay links.<br><button class="btn accent" id="lkNewSecEmpty">Crear la primera sección</button></div>`);
+  }
+
+  viewEl.innerHTML = `<div class="lk-top"><div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn accent small" id="lkNewSec">+ Nueva sección</button>
+        ${secs.length ? `<button class="btn ghost small" id="lkCopyAll">⧉ Copiar todas las secciones</button>` : ""}</div>
+      <span style="font-size:12.5px;color:var(--ink-soft);"><b>${secs.length}</b> sección(es) · tocá una para ver sus links · el lápiz ✎ permite editar</span></div>` +
+    (secs.length ? tiles + detail : `<div class="empty">Todavía no hay links.<br><button class="btn accent" id="lkNewSecEmpty">Crear la primera sección</button></div>`);
 
   if(el("lkNewSec")) el("lkNewSec").onclick = ()=>openLk({kind:"sec"});
   if(el("lkNewSecEmpty")) el("lkNewSecEmpty").onclick = ()=>openLk({kind:"sec"});
+  if(el("lkCopyAll")) el("lkCopyAll").onclick = function(){ lkCopy(lkAllText(), this, "¡Copiado!"); };
+  viewEl.querySelectorAll(".lk-tile").forEach(t=>{
+    const secId = t.dataset.s;
+    t.querySelector(".lk-tile-main").onclick = ()=>{ lk.sel = secId; renderLinks(); };
+    t.querySelector(".lk-tile-copy").onclick = function(e){ e.stopPropagation(); const sec = lkSec(secId); if(sec) lkCopy(lkSecText(sec), this, "✓"); };
+  });
   viewEl.querySelectorAll(".lk-sec").forEach(box=>{
     const secId = box.dataset.s;
+    box.querySelector(".lk-sec-copy").onclick = function(){ const sec = lkSec(secId); if(sec) lkCopy(lkSecText(sec), this, "¡Copiado!"); };
     box.querySelector(".lk-sec-edit").onclick = ()=>openLk({kind:"sec", secId});
     box.querySelector(".lk-sub-new").onclick = ()=>openLk({kind:"sub", secId});
     box.querySelector(".lk-add").onclick = ()=>openLk({kind:"item", secId});
@@ -3795,7 +3850,7 @@ el("lkSave").onclick = ()=>{
   if(!name){ alert("Poné un nombre."); return; }
   if(ctx.kind==="sec"){
     if(ctx.secId){ const s = lkSec(ctx.secId); if(s) s.title = name; }
-    else lkList().push({id:uid(), title:name, items:[], subs:[]});
+    else { const ns = {id:uid(), title:name, items:[], subs:[]}; lkList().push(ns); lk.sel = ns.id; }
   } else if(ctx.kind==="sub"){
     const sec = lkSec(ctx.secId);
     if(sec){
