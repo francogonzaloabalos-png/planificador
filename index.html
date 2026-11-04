@@ -881,7 +881,7 @@ function pushToFirebase(){
 
   // 2. Envío seguro con captura de errores
   try {
-    fbRoomRef.set({data: state, updatedBy: clientId, updatedAt: Date.now()})
+    fbRoomRef.set({data: JSON.parse(JSON.stringify(state)), updatedBy: clientId, updatedAt: Date.now()})
       .then(()=> setSyncStatus("ok", "Sincronizado " + nowTime()))
       .catch(err=> setSyncStatus("err", "Error en la nube: " + (err.code||err.message||"revisá conexión y permisos")));
   } catch(err) {
@@ -3593,7 +3593,7 @@ window.addEventListener("message", e=>{
   if(e.data.type==="rpm-ready"){
     fr.contentWindow.postMessage({type:"rpm-load", objects:disLoadPayload(d), name:d.name}, "*");
   } else if(e.data.type==="rpm-save" && Array.isArray(e.data.objects)){
-    d.objects = e.data.objects; d.touched = true; d.updatedAt = Date.now();
+    d.objects = JSON.parse(JSON.stringify(e.data.objects)); d.touched = true; d.updatedAt = Date.now();
     save();
     const st = el("disStatus"); if(st) st.textContent = "Guardado automáticamente a las " + nowTime();
   }
@@ -3608,19 +3608,3 @@ requestAnimationFrame(()=> requestAnimationFrame(render));
 </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
