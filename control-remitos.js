@@ -1,5 +1,5 @@
 import {
-  DEFAULT_MODEL, headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
+  headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
   differences, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
   receiveReceipt, exportRows, excelDay, GeminiQuotaError, publicLine, newLineKey, excelBlocks
 } from './control-remitos-core.js';
@@ -10,7 +10,6 @@ const LOCAL_KEYS = 'control_remitos_gemini_keys_v1';
 const SHARE_KEYS = 'control_remitos_share_keys_v1';
 const REVIEWER = 'control_remitos_reviewer_v1';
 const VERIFIED_FILTER = 'control_remitos_verified_filter_v1';
-const MODEL = 'control_remitos_gemini_model_v1';
 const MAX_BATCH = 10;
 const MAX_EDGE = 1600;
 const PAUSE = 1800;
@@ -523,10 +522,6 @@ async function editKeys(update) {
   }
 }
 
-function modelName() {
-  return text($('gemini-model').value).replace(/^models\//, '');
-}
-
 function excelFeedback(message, error = false) {
   const feedback = $('excel-feedback');
   feedback.textContent = message;
@@ -552,7 +547,6 @@ function updateControls() {
   const status = ctx?.excelUpload ? ' · pendiente de publicar' : '';
   $('excel-info').textContent = loadingExcel || ctx?.sync?.readingExcel ? 'Cargando Excel…'
     : workbook ? `${count.toLocaleString('es-AR')} ${count === 1 ? 'fila' : 'filas'} · ${workbook.name}${time}${status}` : 'Excel sin cargar';
-  $('gemini-model').disabled = $('save-model').disabled = busy;
   renderKeys();
 }
 
@@ -705,7 +699,7 @@ async function addPhotos(files) {
   } catch { jobMessage('No hay espacio o acceso para guardar las fotos en este navegador.', true); }
 }
 
-async function transcribeWithKeys(ctx, model, base64, onStatus) {
+async function transcribeWithKeys(ctx, base64, onStatus) {
   const attempted = new Set();
   let waited = false;
   while (workspace === ctx) {
@@ -714,7 +708,7 @@ async function transcribeWithKeys(ctx, model, base64, onStatus) {
     if (next) {
       attempted.add(next.value);
       try {
-        return { receipt: await transcribe({ key: next.value, model, base64 }) };
+        return { receipt: await transcribe({ key: next.value, base64 }) };
       } catch (error) {
         if (!(error instanceof GeminiQuotaError)) throw error;
         if (workspace !== ctx) break;
@@ -745,7 +739,6 @@ async function transcribeWithKeys(ctx, model, base64, onStatus) {
 async function processPhotos(status) {
   const ctx = workspace;
   if (busy || !ctx) return;
-  const model = localStorage.getItem(MODEL) || DEFAULT_MODEL;
   if (!activeKeys(ctx).length) {
     $('settings').open = true;
     $('gemini-key').focus();
@@ -779,7 +772,7 @@ async function processPhotos(status) {
         const source = await jpegSource(job);
         if (heicFile(job.source)) job.preview = source;
         const base64 = await encodePhoto(await resizePhoto(source));
-        const outcome = await transcribeWithKeys(ctx, model, base64, message => jobMessage(`${label} · ${message}`));
+        const outcome = await transcribeWithKeys(ctx, base64, message => jobMessage(`${label} · ${message}`));
         if (outcome.pending) {
           pending = outcome.pending;
           break;
@@ -1359,15 +1352,6 @@ $('share-keys').onchange = event => {
   } catch { keyFeedback('No se pudo guardar el modo de claves en este navegador.', true); }
   renderKeys();
 };
-$('save-model').onclick = () => {
-  const model = modelName();
-  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(model)) return keyFeedback('Ingresá un nombre de modelo de Gemini válido.', true);
-  try {
-    localStorage.setItem(MODEL, model);
-    $('gemini-model').value = model;
-    keyFeedback('Modelo guardado.');
-  } catch { keyFeedback('No se pudo guardar el modelo en este navegador.', true); }
-};
 $('choose-excel').onclick = () => $('excel-file').click();
 $('remove-excel').onclick = removeWorkbook;
 $('excel-file').onchange = event => { loadWorkbook(event.target.files[0]); event.target.value = ''; };
@@ -1401,7 +1385,6 @@ $('manual-next').onclick = () => { chooser.page++; renderChooser(); };
 $('export-xlsx').onclick = () => download('xlsx');
 $('export-csv').onclick = () => download('csv');
 
-$('gemini-model').value = localStorage.getItem(MODEL) || DEFAULT_MODEL;
 refreshRoom();
 window.addEventListener('storage', refreshRoom);
 window.addEventListener('focus', refreshRoom);

@@ -1,4 +1,4 @@
-export const DEFAULT_MODEL = 'gemini-3.8-flash';
+const GEMINI_MODELS = ['gemini-3.8-flash', 'gemini-3.5-flash-lite'];
 
 export const excelColumns = {
   fecha: 'FECHA', codigo: 'CODIGO', herramienta: 'HERRAMIENTA EQUIPO', detalle: 'DETALLE',
@@ -380,29 +380,37 @@ export class GeminiQuotaError extends Error {
   }
 }
 
-export async function transcribe({ key, model, base64 }) {
-  const path = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+export async function transcribe({ key, base64 }) {
   const body = JSON.stringify({
     contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: base64 } }] }],
     generationConfig: { responseMimeType: 'application/json', responseSchema }
   });
-  let response, json;
-  try {
-    const signal = AbortSignal.timeout(120000);
-    response = await fetch(path, { method: 'POST', signal, body,
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key } });
-    json = await response.json().catch(() => null);
-  } catch {
-    throw new Error('Gemini no respondió. Revisá la conexión y reintentá la foto.');
+  for (const model of GEMINI_MODELS) {
+    const path = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+    let response, json;
+    try {
+      const signal = AbortSignal.timeout(120000);
+      response = await fetch(path, { method: 'POST', signal, body,
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key } });
+      json = await response.json().catch(() => null);
+    } catch {
+      throw new Error('Gemini no respondió. Revisá la conexión y reintentá la foto.');
+    }
+    if (response.status === 429 || json?.error?.status === 'RESOURCE_EXHAUSTED') {
+      throw new GeminiQuotaError(json?.error, response.headers.get('Retry-After'));
+    }
+    if (response.status === 404) continue;
+    if (!response.ok) {
+      const hints = { 400: 'Gemini rechazó la solicitud de transcripción.', 401: 'Revisá la clave de Gemini.',
+        403: 'Revisá los permisos de la clave de Gemini.' };
+      throw new Error(`Gemini respondió con error ${response.status}. ${hints[response.status] || 'Reintentá la foto.'}`);
+    }
+    return parseTranscription(json);
   }
-  if (response.status === 429 || json?.error?.status === 'RESOURCE_EXHAUSTED') {
-    throw new GeminiQuotaError(json?.error, response.headers.get('Retry-After'));
-  }
-  if (!response.ok) {
-    const hints = { 400: 'Revisá que el modelo admita imágenes y JSON estructurado.', 401: 'Revisá la clave de Gemini.',
-      403: 'Revisá los permisos de la clave de Gemini.', 404: 'Revisá el nombre del modelo.' };
-    throw new Error(`Gemini respondió con error ${response.status}. ${hints[response.status] || 'Reintentá la foto.'}`);
-  }
+  throw new Error('Gemini respondió con error 404 para los modelos automáticos. Revisá el acceso del proyecto a la API de Gemini.');
+}
+
+function parseTranscription(json) {
   const candidate = json?.candidates?.[0];
   if (!candidate || candidate.finishReason !== 'STOP') throw new Error('Gemini no completó la transcripción.');
   const raw = candidate.content?.parts?.filter(part => !part.thought).map(part => part.text || '').join('');
