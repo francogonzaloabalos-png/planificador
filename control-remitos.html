@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Control de remitos</title>
+  <style>
+    :root{color-scheme:light;--ink:#203129;--soft:#52645a;--line:#d5ded7;--paper:#fff;--bg:#f4f7f4;--accent:#205d49;--ok:#166448;--doubt:#80500b;--missing:#a32939;font:15px/1.45 system-ui,sans-serif}
+    *{box-sizing:border-box}
+    [hidden]{display:none!important}
+    body{margin:0;background:var(--bg);color:var(--ink)}
+    main{max-width:1460px;margin:auto;padding:clamp(12px,2vw,28px)}
+    h1,h2,h3,p{margin:0} h1{font-size:clamp(1.45rem,4vw,2rem);letter-spacing:-.035em} h2{font-size:1.15rem} h3{font-size:1.05rem}
+    button,input,select,textarea{font:inherit;color:inherit}
+    button,input:not([type=checkbox],[type=range]),select,textarea{border:1px solid var(--line);border-radius:7px;background:var(--paper);padding:8px 10px;min-width:0}
+    button{font-weight:650;cursor:pointer;min-height:38px} button:hover:not(:disabled){border-color:var(--accent);background:#e9f3ee}
+    button.primary{border-color:var(--accent);background:var(--accent);color:white} button.primary:hover:not(:disabled){background:#184939}
+    button:disabled{opacity:.45;cursor:default} button.small{padding:5px 8px;min-height:32px;font-size:.84rem}
+    :focus-visible{outline:2px solid #398668;outline-offset:2px} input[type=checkbox],input[type=range],progress{accent-color:var(--accent)}
+    textarea{width:100%;resize:vertical;min-height:62px} progress{width:100%;height:11px}
+    label.field{display:grid;align-content:start;gap:4px;font-size:.86rem;font-weight:600;min-width:0}
+    label.check{display:inline-flex;gap:6px;align-items:center;min-height:35px;font-size:.9rem}
+    input[type=checkbox]{margin:0;width:17px;height:17px;flex:none}
+    summary{cursor:pointer;font-weight:650} .hint,.details-text{color:var(--soft);font-size:.86rem;overflow-wrap:anywhere} .error{color:var(--missing)}
+    .actions,.top,.filters,.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .top,.toolbar{justify-content:space-between} .top{margin-bottom:14px} .top p{margin-top:4px}
+    .sync{border:1px solid var(--line);padding:5px 9px;border-radius:20px;font-size:.82rem;background:var(--paper)}
+    .panel,.receipt,.empty{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:clamp(10px,1.35vw,18px)}
+    .controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin-bottom:14px}
+    .stack{display:grid;gap:9px} .control-grid,.receipt-head,.edit-grid{display:grid;gap:8px;grid-template-columns:repeat(2,minmax(0,1fr))}
+    .receipt-head{grid-template-columns:repeat(4,minmax(0,1fr));margin:10px 0 12px} .wide{grid-column:1/-1}
+    .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 12px}
+    .stat{background:var(--paper);border:1px solid var(--line);border-top:3px solid var(--tone,#75887c);border-radius:8px;padding:8px 12px;font-size:.87rem}
+    .stat strong{display:block;font-size:1.55rem;color:var(--tone,var(--ink));line-height:1.12;font-variant-numeric:tabular-nums}
+    .ok{--tone:var(--ok)} .doubtful{--tone:var(--doubt)} .missing{--tone:var(--missing)}
+    .toolbar{gap:10px;margin-bottom:14px} .filters select{max-width:min(230px,75vw)}
+    .queue{margin:0;padding:0;list-style:none;max-height:155px;overflow:auto;font-size:.85rem}
+    .queue li{padding:5px 0;overflow-wrap:anywhere;border-top:1px solid var(--line)}
+    .key-list{list-style:none;margin:0;padding:0;display:grid;gap:5px}
+    .key-list li{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:5px}
+    #receipts{display:grid;gap:12px} #notice{margin-bottom:10px}
+    .receipt-layout{display:grid;grid-template-columns:minmax(175px,28%) minmax(0,1fr);gap:15px;align-items:start}
+    .photo-block{display:grid;gap:6px;min-width:0} .photo-block figure{max-height:540px;overflow:auto;margin:0;background:#ebf0eb;border:1px solid var(--line);border-radius:8px}
+    .photo-block img{display:block;width:100%;height:auto} .photo-block input{width:min(120px,100%)}
+    .review{min-width:0} .table-wrap{overflow:auto} table{width:100%;border-collapse:collapse;text-align:left;font-size:.9rem}
+    th,td{text-align:left;padding:7px;vertical-align:top;border-bottom:1px solid var(--line)}
+    th{color:var(--soft);background:#f1f5f1;font-size:.8rem} td:nth-child(1){width:108px} td:nth-child(3){width:69px} td:nth-child(4){width:43%}
+    td input:not([type=checkbox]){width:100%;padding:6px 7px} td details{margin-top:6px} td details summary{font-size:.82rem;color:var(--accent)}
+    td textarea{min-height:54px} td .edit-grid{margin-top:8px;grid-template-columns:1fr} td .check{min-height:26px}
+    tr.highlighted td:first-child{box-shadow:inset 3px 0 #d65496} td .status{font-weight:700;color:var(--tone,var(--soft));display:block;margin-bottom:5px}
+    .row-detail{padding:7px;border:1px solid var(--line);border-radius:6px;margin:0 0 6px;background:#fbfcfb;overflow-wrap:anywhere}
+    .row-detail div{font-size:.83rem;color:var(--soft)} .row-detail .warning{color:var(--doubt)}
+    .read-field{display:block;overflow-wrap:anywhere;white-space:pre-wrap;font-weight:400}
+    .receipt-foot{margin-top:9px} .empty{padding:22px;color:var(--soft)}
+    dialog{max-width:min(700px,calc(100% - 20px));width:100%;max-height:90dvh;padding:16px;border:1px solid var(--line);border-radius:12px;color:var(--ink)}
+    dialog::backdrop{background:#18292180} .candidates{display:grid;gap:6px;margin:8px 0}
+    .candidates .row-detail{margin:0} .candidates button{margin-top:5px}
+    @media(max-width:930px){.receipt-layout{grid-template-columns:minmax(125px,23%) minmax(0,1fr)}.receipt-head{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:720px){
+      .controls,.receipt-layout{grid-template-columns:minmax(0,1fr)} .photo-block figure{max-height:360px} .photo-block{max-width:460px;width:100%;margin:auto}
+      .stats{grid-template-columns:repeat(2,minmax(0,1fr))} .toolbar{align-items:flex-start} .filters{column-gap:12px}
+    }
+    @media(max-width:540px){
+      table,tbody{display:block} thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+      tr{display:grid;grid-template-columns:1fr 1fr;gap:0 8px;padding:7px;border:1px solid var(--line);border-radius:8px;margin-bottom:7px}
+      tr.highlighted{border-left:3px solid #d65496} tr.highlighted td:first-child{box-shadow:none}
+      td{display:block;border:0;padding:4px;min-width:0} td:nth-child(n){width:auto} td:nth-child(2){grid-row:2;grid-column:1/-1} td:nth-child(4){grid-column:1/-1}
+      td::before{content:attr(data-label);display:block;color:var(--soft);font-weight:650;font-size:.8rem;margin-bottom:2px}
+    }
+  </style>
+  <script type="module" src="control-remitos.js"></script>
+</head>
+<body>
+  <main>
+    <header class="top">
+      <div><h1>Control de remitos</h1><p class="hint">Transcribí fotos y revisá las entregas contra tu Excel.</p></div>
+      <div class="actions"><span id="sync" class="sync" role="status">Modo local</span><button id="sync-retry" class="small" hidden>Reintentar sincronización</button></div>
+    </header>
+
+    <div class="controls">
+      <section class="panel stack" aria-labelledby="fuentes">
+        <h2 id="fuentes">Excel y Gemini</h2>
+        <div class="actions"><button id="choose-excel">Cargar Excel (.xlsx)</button><span class="hint" id="excel-info" role="status">Excel sin cargar</span></div>
+        <input type="file" id="excel-file" accept=".xlsx" hidden>
+        <details id="settings">
+          <summary>Configurar Gemini</summary>
+          <form class="control-grid" id="settings-form" style="margin-top:8px">
+            <label class="check wide"><input id="share-keys" type="checkbox" checked> Compartir claves con la sala</label>
+            <p class="hint wide" id="key-warning">Las claves compartidas quedan visibles para quien tenga acceso a la sala</p>
+            <p class="hint wide" id="key-info" role="status"></p>
+            <ol id="gemini-keys" class="key-list wide" aria-label="Claves de Gemini en orden de uso"></ol>
+            <label class="field">Nueva clave <input type="password" id="gemini-key" autocomplete="off" spellcheck="false" placeholder="Pegá una clave de Gemini"></label>
+            <div class="actions"><button type="submit" id="add-key" class="small">Agregar clave</button></div>
+            <label class="field">Modelo <input type="text" id="gemini-model" autocomplete="off" spellcheck="false"></label>
+            <div class="actions"><button type="button" id="save-model" class="small">Guardar modelo</button></div>
+            <p class="hint wide" id="key-feedback" role="status"></p>
+          </form>
+        </details>
+      </section>
+
+      <section class="panel stack" aria-labelledby="fotos">
+        <h2 id="fotos">Fotos</h2>
+        <div class="actions">
+          <button id="choose-images">Agregar fotos</button>
+          <button id="process" class="primary" disabled>Transcribir pendientes</button>
+          <button id="retry" disabled>Reintentar fallidas</button>
+        </div>
+        <input type="file" id="images" accept=".jpg,.jpeg,.png,.heic,.heif,image/jpeg,image/png,image/heic,image/heif" multiple hidden>
+        <p class="hint">JPG, PNG o HEIC. Hasta 10 por tanda. Las fotos se guardan en este navegador y se envían a Gemini al transcribir.</p>
+        <div id="progress-wrap" hidden><progress id="progress" value="0" max="1" aria-label="Avance de la tanda"></progress></div>
+        <p id="task-status" class="hint" role="status"></p>
+        <details id="queue-wrap" hidden><summary id="queue-summary">Fotos cargadas</summary><ul id="queue" class="queue"></ul></details>
+      </section>
+    </div>
+
+    <section aria-label="Revisión de remitos">
+      <div class="stats" aria-label="Totales de la revisión">
+        <div class="stat ok"><strong id="count-ok">0</strong>✅ Coincide</div>
+        <div class="stat doubtful"><strong id="count-doubtful">0</strong>⚠️ Dudoso</div>
+        <div class="stat missing"><strong id="count-missing">0</strong>❌ No encontrado</div>
+        <div class="stat"><strong id="count-reviewed">0</strong>Remitos revisados</div>
+      </div>
+      <div class="toolbar">
+        <div class="filters">
+          <label class="check"><input id="include-all" type="checkbox"> Comparar todas las líneas</label>
+          <label class="check"><input id="only-issues" type="checkbox"> Solo ⚠️ y ❌</label>
+          <label class="check">Persona <select id="person"><option value="">Todas</option></select></label>
+          <label class="check">Obra <select id="work"><option value="">Todas</option></select></label>
+        </div>
+        <div class="actions"><button id="export-xlsx" disabled>Exportar XLSX</button><button id="export-csv" disabled>Exportar CSV</button></div>
+      </div>
+      <p id="notice" class="hint" role="status" hidden></p>
+      <div id="receipts"></div>
+      <p id="empty" class="empty">Agregá fotos para empezar o abrí el control desde una sala del planificador para ver sus resultados.</p>
+    </section>
+  </main>
+
+  <dialog id="chooser" aria-labelledby="chooser-title">
+    <div class="top"><h2 id="chooser-title">Elegir fila del Excel</h2><form method="dialog"><button class="small">Cerrar</button></form></div>
+    <p id="chooser-line" class="hint"></p>
+    <div id="suggestions" class="candidates"></div>
+    <label class="field">Buscar en todo el Excel <input type="search" id="manual-search" placeholder="Fila, herramienta, persona, obra…"></label>
+    <div id="manual-results" class="candidates"></div>
+    <div class="actions" id="manual-pagination" hidden><button class="small" id="manual-prev">Anterior</button><span id="manual-page" class="hint"></span><button class="small" id="manual-next">Siguiente</button></div>
+  </dialog>
+</body>
+</html>

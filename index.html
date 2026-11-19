@@ -568,6 +568,7 @@ table.xl-conciliation tbody td:nth-child(-n+5){position:sticky;top:10px;vertical
       <button data-view="indicators"><span class="dot"></span><span class="nav-label">Indicadores</span></button>
       <button data-view="dashboard"><span class="dot"></span><span class="nav-label">Dashboard</span></button>
       <button data-view="stock"><span class="dot"></span><span class="nav-label">Stock y remitos</span></button>
+      <button data-view="control-remitos"><span class="dot"></span><span class="nav-label">Control de remitos</span></button>
       <button data-view="plantilla"><span class="dot"></span><span class="nav-label">Plantilla de relevamiento</span></button>
       <button data-view="alertas"><span class="dot"></span><span class="nav-label">Alertas</span><span id="altBadge" class="badge atrasado" style="display:none"></span></button>
       <button data-view="notas"><span class="dot"></span><span class="nav-label">Notas</span></button>
@@ -590,6 +591,10 @@ table.xl-conciliation tbody td:nth-child(-n+5){position:sticky;top:10px;vertical
       <div class="stats" id="topStats"></div>
     </div>
     <div class="view" id="view"></div>
+    <section class="view" id="cr-view" aria-label="Control de remitos" hidden>
+      <iframe id="cr-frame" data-src="control-remitos.html" title="Control de remitos"
+        style="display:block;width:100%;height:calc(100dvh - 145px);min-height:440px;border:1px solid var(--line);border-radius:8px;"></iframe>
+    </section>
   </div>
 </div>
 
@@ -1087,7 +1092,7 @@ document.querySelectorAll(".nav button").forEach(btn=>{
     document.querySelectorAll(".nav button").forEach(b=>b.classList.remove("active"));
     btn.classList.add("active");
     currentView = btn.dataset.view;
-const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal", indicators:"Registro de indicadores", dashboard:"Dashboard de indicadores", stock:"Stock y remitos", plantilla:"Plantilla de relevamiento", alertas:"Alertas de integridad", notas:"Notas", disenos:"Diseños 3D", links:"Links y accesos"};
+const titles = {gantt:"Diagrama de Gantt", kanban:"Tablero", table:"Listado de tareas", team:"Equipo", log:"Bitácora semanal", indicators:"Registro de indicadores", dashboard:"Dashboard de indicadores", stock:"Stock y remitos", "control-remitos":"Control de remitos", plantilla:"Plantilla de relevamiento", alertas:"Alertas de integridad", notas:"Notas", disenos:"Diseños 3D", links:"Links y accesos"};
     el("viewTitle").textContent = titles[currentView];
     render();
   });
@@ -1108,6 +1113,14 @@ function updateTopStats(){
 
 function render(){
   updateTopStats();
+  const showControlRemitos = currentView === "control-remitos";
+  el("cr-view").hidden = !showControlRemitos;
+  viewEl.hidden = showControlRemitos;
+  if(showControlRemitos){
+    const frame = el("cr-frame");
+    if(!frame.hasAttribute("src")) frame.src = frame.dataset.src;
+    return;
+  }
   if(currentView==="gantt") renderGantt();
   else if(currentView==="kanban") renderKanban();
   else if(currentView==="table") renderTable();
