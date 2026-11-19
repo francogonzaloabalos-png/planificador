@@ -1,13 +1,15 @@
 import {
   DEFAULT_MODEL, headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
   differences, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
-  receiveReceipt, mergePublished, exportRows, excelDay, GeminiQuotaError
+  receiveReceipt, exportRows, excelDay, GeminiQuotaError, publicLine, newLineKey, excelBlocks
 } from './control-remitos-core.js';
 
 const $ = id => document.getElementById(id);
 const LEGACY_KEY = 'control_remitos_gemini_key_v1';
 const LOCAL_KEYS = 'control_remitos_gemini_keys_v1';
 const SHARE_KEYS = 'control_remitos_share_keys_v1';
+const REVIEWER = 'control_remitos_reviewer_v1';
+const VERIFIED_FILTER = 'control_remitos_verified_filter_v1';
 const MODEL = 'control_remitos_gemini_model_v1';
 const MAX_BATCH = 10;
 const MAX_EDGE = 1600;
@@ -18,6 +20,9 @@ const html = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&
 const sleep = delay => new Promise(resolve => setTimeout(resolve, delay));
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const newId = () => `r${Date.now().toString(36)}-${crypto.randomUUID()}`;
+const loadTime = new Intl.DateTimeFormat('es-AR', {
+  timeZone: 'America/Argentina/Buenos_Aires', dateStyle: 'short', timeStyle: 'short', hour12: false
+});
 
 let workspace;
 let roomGeneration = 0;
@@ -80,8 +85,8 @@ async function readRecords(scope) {
   });
 }
 
-async function storeRecords(records) {
-  if (!records.length) return;
+async function storeRecords(records, deletes = []) {
+  if (!records.length && !deletes.length) return;
   const snapshot = structuredClone(records);
   const db = await database;
   return new Promise((resolve, reject) => {
@@ -90,6 +95,7 @@ async function storeRecords(records) {
     transaction.onabort = () => reject(transaction.error || new Error('Se interrumpió el guardado local.'));
     const store = transaction.objectStore('records');
     for (const record of snapshot) store.put(record);
+    for (const key of deletes) store.delete(key);
   });
 }
 
@@ -126,8 +132,9 @@ async function refreshRoom() {
   targetScope = scope;
   if (workspace) detach(workspace);
   workspace = null;
+  excelFeedback('');
   if ($('chooser').open) $('chooser').close();
-  for (const url of photoUrls.values()) URL.revokeObjectURL(url);
+  for (const [id] of photoUrls) forgetPhoto(id);
   photoUrls.clear();
   cards.clear();
   $('receipts').replaceChildren();
@@ -141,15 +148,17 @@ async function refreshRoom() {
   try {
     const records = await readRecords(scope);
     if (generation !== roomGeneration) return;
-    const workbook = records.find(record => record.id === 'excel');
+    const excelUpload = records.find(record => record.id === 'excel-queued');
+    const workbook = excelUpload || records.find(record => record.id === 'excel' && record.name !== 'BASE DE DATOS (CSV)');
     const local = new Map(records.filter(record => record.type === 'photo').map(job => [job.id, job]));
-    const cached = records.find(record => record.id === 'cloud')?.values || {};
+    const values = records.find(record => record.id === 'cloud')?.values || {};
     workspace = {
       scope, workbook, excel: workbook ? indexWorkbook(workbook.rows) : null, local,
-      remote: new Map(), includeAll: records.find(record => record.id === 'options')?.includeAll === true,
+      values, remote: new Map(), excelUpload, patches: new Map(records.filter(record => record.type === 'patch')
+        .sort((a, b) => a.id.localeCompare(b.id)).map(record => [record.id, record])),
+      includeAll: records.find(record => record.id === 'options')?.includeAll === true,
       comparison: null, sync: null, keyBlocks: new Map()
     };
-    readCloud(workspace, cached);
     recalculate(workspace);
     connect(workspace, parentConnection());
     render();
@@ -164,10 +173,9 @@ function detach(ctx) {
   const sync = ctx.sync;
   ctx.sync = null;
   if (!sync?.ref) return;
-  if (sync.keysRef && sync.onKeys) {
-    try { sync.keysRef.off('value', sync.onKeys); } catch { /* La app compartida puede estar cerrada. */ }
-  }
   try {
+    if (sync.onKeys) sync.configRef.off('value', sync.onKeys);
+    if (sync.onExcel) sync.excelRef.child('actual').off('value', sync.onExcel);
     sync.ref.off('value', sync.onValue);
     sync.connected.off('value', sync.onConnected);
   } catch { /* El planificador puede haber cerrado la app compartida. */ }
@@ -175,9 +183,9 @@ function detach(ctx) {
 
 function listenKeys(ctx) {
   const sync = ctx.sync;
-  if (!sync?.keysRef || !!sync.onKeys === usesRoomKeys(ctx)) return;
+  if (!sync?.configRef || !!sync.onKeys === usesRoomKeys(ctx)) return;
   if (sync.onKeys) {
-    sync.keysRef.off('value', sync.onKeys);
+    sync.configRef.off('value', sync.onKeys);
     sync.onKeys = null;
     sync.keys = null;
     sync.keysError = false;
@@ -189,7 +197,7 @@ function listenKeys(ctx) {
     renderKeys();
   };
   sync.onKeys = onKeys;
-  sync.keysRef.on('value', onKeys, () => {
+  sync.configRef.on('value', onKeys, () => {
     if (ctx.sync !== sync || sync.onKeys !== onKeys) return;
     sync.keysError = true;
     renderKeys();
@@ -208,19 +216,30 @@ function connect(ctx, connection) {
   try {
     const db = connection.sdk.database(connection.app);
     // Hermano de «salas»: el planificador reemplaza el contenido completo de cada sala.
-    const room = db.ref('controlRemitos').child(connection.room);
+    const room = sync.room = db.ref('controlRemitos').child(connection.room);
     sync.ref = room.child('remitos');
-    sync.keysRef = room.child('config');
+    sync.configRef = room.child('config');
+    sync.excelRef = room.child('excel');
+    sync.photoWork = new Set();
+    sync.photoDone = new Set();
     listenKeys(ctx);
+    sync.onExcel = snapshot => {
+      if (ctx.sync === sync) receiveExcel(ctx, sync, snapshot.val());
+    };
+    sync.excelRef.child('actual').on('value', sync.onExcel, () => {
+      if (ctx.sync === sync) excelFeedback('No se pudo leer el Excel de la sala.', true);
+    });
     sync.connected = db.ref('.info/connected');
     sync.onValue = snapshot => {
       if (ctx.sync !== sync) return;
       sync.ready = true;
       const values = snapshot.val() || {};
-      readCloud(ctx, values);
+      ctx.values = values;
       storeRecords([{ id: 'cloud', scope: ctx.scope, values }]).catch(storeError);
       recalculate(ctx);
       render();
+      flush(ctx);
+      flushPhotos(ctx);
     };
     sync.onConnected = snapshot => {
       if (ctx.sync !== sync) return;
@@ -228,6 +247,9 @@ function connect(ctx, connection) {
       updateSync();
       renderKeys();
       flush(ctx);
+      flushExcel(ctx);
+      flushPhotos(ctx);
+      updateControls();
     };
     sync.ref.on('value', sync.onValue, () => {
       if (ctx.sync !== sync) return;
@@ -242,56 +264,82 @@ function connect(ctx, connection) {
   renderKeys();
 }
 
-function readCloud(ctx, values) {
-  const previous = ctx.remote;
-  ctx.remote = new Map();
-  for (const [id, value] of Object.entries(values)) {
-    if (!/^r[a-z0-9-]+$/i.test(id) || ctx.local.has(id)) continue;
-    const receipt = receiveReceipt(id, value);
-    if (receipt) ctx.remote.set(id, same(previous.get(id), receipt) ? previous.get(id) : receipt);
+function withReceiptChanges(values, fields) {
+  const next = { ...values };
+  for (const [path, value] of Object.entries(fields)) {
+    const parts = path.split('/');
+    const field = parts.pop();
+    let node = next;
+    for (const part of parts) node = node[part] = { ...node[part] };
+    if (value === null) delete node[field];
+    else node[field] = value;
   }
+  return next;
+}
+
+function recalculate(ctx) {
+  let values = { ...ctx.values };
+  for (const job of ctx.local.values()) {
+    if (job.receipt && !values[job.id]) values[job.id] = job.payload || publicReceipt(job.receipt);
+  }
+  for (const patch of ctx.patches.values()) values = withReceiptChanges(values, patch.fields);
+  const receipts = new Map();
+  for (const [id, value] of Object.entries(values)) {
+    if (!/^r[a-z0-9-]+$/i.test(id)) continue;
+    const receipt = receiveReceipt(id, value);
+    if (receipt) receipts.set(id, receipt);
+  }
+  ctx.remote = receipts;
+  ctx.comparison = compareReceipts(receipts.values(), [], ctx.excel, ctx.includeAll);
+}
+
+function updatesAllowed(ctx) {
+  const current = parentConnection();
+  return workspace === ctx && ctx.sync?.online && current?.scope === ctx.scope && current.app === ctx.sync.app;
 }
 
 function updateSync() {
   const ctx = workspace;
   if (!ctx) return;
   const sync = ctx.sync;
-  const pending = [...ctx.local.values()].filter(job => job.pending).length;
-  $('sync-retry').hidden = !sync?.error;
+  const pending = [...ctx.local.values()].filter(job => job.pending).length + ctx.patches.size + Number(!!ctx.excelUpload);
+  const error = sync?.error || sync?.photoError || sync?.excelError;
+  $('sync-retry').hidden = !error;
   let status = 'Modo local';
   if (ctx.scope !== 'local') {
-    const suffix = pending ? ` · ${pending} por publicar` : '';
-    if (sync?.error) status = `Error de sincronización${suffix}`;
-    else if (!sync?.ready || !sync.online) status = `Sala sin conexión${suffix}`;
-    else status = pending ? `Sincronizando${suffix}` : 'Sala sincronizada';
+    const suffix = pending ? ' · ' + pending + ' por publicar' : '';
+    if (error) status = 'Error de sincronización' + suffix;
+    else if (!sync?.ready || !sync.online) status = 'Sala sin conexión' + suffix;
+    else status = pending ? 'Sincronizando' + suffix : 'Sala sincronizada';
   }
   $('sync').textContent = status;
 }
 
 async function flush(ctx) {
   const sync = ctx.sync;
-  if (workspace !== ctx || !sync?.ready || !sync.online || sync.writing || sync.error) return;
-  const connection = parentConnection();
-  if (connection?.scope !== ctx.scope || connection.app !== sync.app) return;
-  const changes = new Map([...ctx.local.values()].filter(job => job.pending).map(job => [job.id, job.payload]));
-  if (!changes.size) return;
+  if (!updatesAllowed(ctx) || !sync?.ready || sync.writing || sync.error) return;
+  const creations = [...ctx.local.values()].filter(job => job.pending);
+  const patches = [...ctx.patches.values()];
+  if (!creations.length && !patches.length) return;
   sync.writing = true;
   try {
-    const outcome = await sync.ref.transaction(current => mergePublished(current || {}, changes), undefined, false);
-    if (ctx.sync !== sync) return;
-    if (!outcome.committed) throw new Error('Publicación interrumpida.');
-    const values = outcome.snapshot.val() || {};
-    readCloud(ctx, values);
-    const acknowledged = [];
-    for (const [id, payload] of changes) {
-      const job = ctx.local.get(id);
-      // Una edición hecha durante el envío queda pendiente para la transacción siguiente.
-      if (job.payload === payload) {
-        job.pending = false;
-        acknowledged.push(job);
-      }
+    for (const job of creations) {
+      if (!updatesAllowed(ctx) || ctx.sync !== sync) break;
+      const result = await sync.ref.child(job.id).transaction(current => current == null ? job.payload : undefined, undefined, false);
+      if (ctx.sync !== sync) return;
+      if (!ctx.values[job.id] && result.snapshot.val()) ctx.values = { ...ctx.values, [job.id]: result.snapshot.val() };
+      await storeRecords([{ ...job, pending: false }]);
+      job.pending = false;
     }
-    await storeRecords(acknowledged).catch(storeError);
+    for (const patch of patches) {
+      if (!updatesAllowed(ctx) || ctx.sync !== sync) break;
+      const previous = ctx.values;
+      await sync.ref.update(patch.fields);
+      if (ctx.sync !== sync) return;
+      if (ctx.values === previous) ctx.values = withReceiptChanges(ctx.values, patch.fields);
+      await storeRecords([], [[ctx.scope, patch.id]]);
+      ctx.patches.delete(patch.id);
+    }
   } catch {
     if (ctx.sync === sync) sync.error = true;
   } finally {
@@ -299,33 +347,34 @@ async function flush(ctx) {
     if (ctx.sync === sync) {
       recalculate(ctx);
       render();
+      flushPhotos(ctx);
+      flush(ctx);
     }
   }
 }
 
-function localReceipts(ctx) {
-  return [...ctx.local.values()].filter(job => job.receipt).map(job => job.receipt);
-}
-
-function recalculate(ctx) {
-  const local = localReceipts(ctx);
-  ctx.comparison = compareReceipts(local, ctx.remote.values(), ctx.excel, ctx.includeAll);
-  const changed = [];
-  for (const receipt of local) {
-    const job = ctx.local.get(receipt.id);
-    const payload = publicReceipt(receipt, ctx.comparison.results);
-    if (same(payload, job.payload)) continue;
-    receipt.lines.forEach((line, index) => {
-      const result = ctx.comparison.results.get(lineId(receipt, index));
-      line.estado = result.state;
-      line.elegida = result.chosen;
-      line.decision = result.decision || '';
-    });
-    job.payload = payload;
-    job.pending = ctx.scope !== 'local';
-    changed.push(job);
-  }
-  storeRecords(changed).then(() => flush(ctx)).catch(storeError);
+async function changeReceipt(fields) {
+  const ctx = workspace;
+  try {
+    if (ctx.scope === 'local') {
+      ctx.values = withReceiptChanges(ctx.values, fields);
+      const receiptId = Object.keys(fields)[0].split('/')[0];
+      // Los trabajos antiguos pueden tener el remito únicamente en IndexedDB.
+      if (!ctx.values[receiptId].version) {
+        const job = ctx.local.get(receiptId);
+        ctx.values = withReceiptChanges({ ...ctx.values, [receiptId]: job.payload || publicReceipt(job.receipt) }, fields);
+      }
+      recalculate(ctx);
+      await storeRecords([{ id: 'cloud', scope: ctx.scope, values: ctx.values }]);
+    } else {
+      const patch = { id: 'patch-' + newId(), scope: ctx.scope, type: 'patch', fields };
+      ctx.patches.set(patch.id, patch);
+      recalculate(ctx);
+      await storeRecords([patch]);
+      flush(ctx);
+    }
+  } catch { storeError(); }
+  if (workspace === ctx) render();
 }
 
 const prefersSharing = () => localStorage.getItem(SHARE_KEYS) !== '0';
@@ -406,16 +455,21 @@ function renderKeys() {
   }
 }
 
-async function changeSharedKeys(ctx, update) {
+async function updateRoomConfig(ctx, update) {
   const sync = ctx.sync;
   const connection = parentConnection();
-  if (!sync?.keysRef || connection?.scope !== ctx.scope || connection.app !== sync.app) throw new Error();
-  const outcome = await sync.keysRef.transaction(current => {
+  if (!sync?.configRef || connection?.scope !== ctx.scope || connection.app !== sync.app) throw new Error();
+  return sync.configRef.transaction(current => update(current || {}), undefined, false);
+}
+
+async function changeSharedKeys(ctx, update) {
+  const sync = ctx.sync;
+  const outcome = await updateRoomConfig(ctx, current => {
     const entries = decodeKeys(current);
     const updated = update(entries);
-    return updated === entries ? undefined : encodeKeys(updated);
-  }, undefined, false);
-  if (ctx.sync === sync && outcome.committed) {
+    return updated === entries ? undefined : { ...current, ...encodeKeys(updated) };
+  });
+  if (ctx.sync === sync && usesRoomKeys(ctx) && outcome.committed) {
     sync.keys = decodeKeys(outcome.snapshot.val());
     renderKeys();
   }
@@ -473,15 +527,31 @@ function modelName() {
   return text($('gemini-model').value).replace(/^models\//, '');
 }
 
+function excelFeedback(message, error = false) {
+  const feedback = $('excel-feedback');
+  feedback.textContent = message;
+  feedback.hidden = !message;
+  feedback.classList.toggle('error', error);
+}
+
 function updateControls() {
   const ctx = workspace;
-  $('choose-excel').disabled = !ctx || loadingExcel;
+  $('choose-excel').disabled = !ctx || loadingExcel || !!ctx.sync?.writingExcel;
+  $('choose-excel').textContent = ctx?.workbook ? 'Actualizar (subir de nuevo)' : 'Cargar Excel (.xlsx)';
+  $('remove-excel').hidden = !ctx?.workbook && !ctx?.sync?.excelMeta;
+  $('remove-excel').disabled = loadingExcel || !!ctx?.sync?.writingExcel;
+  $('remove-excel').textContent = ctx?.scope === 'local' ? 'Quitar Excel local' : 'Quitar Excel de la sala';
   $('choose-images').disabled = !ctx || busy;
   $('process').disabled = !ctx || busy || ![...ctx.local.values()].some(job => job.status === 'queued');
   $('retry').disabled = !ctx || busy || ![...ctx.local.values()].some(job => job.status === 'failed');
   $('include-all').disabled = !ctx || !ctx.excel;
   $('include-all').checked = !!ctx?.includeAll;
-  $('excel-info').textContent = ctx?.workbook ? `${ctx.workbook.rows.length.toLocaleString('es-AR')} filas · ${ctx.workbook.name}` : 'Excel sin cargar';
+  const workbook = ctx?.workbook;
+  const time = workbook?.loadedAt ? ` · ${loadTime.format(workbook.loadedAt)}` : '';
+  const count = workbook?.rows.length;
+  const status = ctx?.excelUpload ? ' · pendiente de publicar' : '';
+  $('excel-info').textContent = loadingExcel || ctx?.sync?.readingExcel ? 'Cargando Excel…'
+    : workbook ? `${count.toLocaleString('es-AR')} ${count === 1 ? 'fila' : 'filas'} · ${workbook.name}${time}${status}` : 'Excel sin cargar';
   $('gemini-model').disabled = $('save-model').disabled = busy;
   renderKeys();
 }
@@ -515,7 +585,7 @@ async function jpegSource(job) {
   }
 }
 
-async function resizePhoto(source, maxEdge = MAX_EDGE) {
+async function resizePhoto(source, maxEdge = MAX_EDGE, quality = .89) {
   const url = URL.createObjectURL(source);
   try {
     const photo = new Image();
@@ -529,7 +599,7 @@ async function resizePhoto(source, maxEdge = MAX_EDGE) {
     context.fillStyle = '#fff';
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(photo, 0, 0, canvas.width, canvas.height);
-    const jpeg = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', .89));
+    const jpeg = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
     if (!jpeg) throw new Error('No se pudo crear el JPG.');
     return jpeg;
   } catch {
@@ -546,6 +616,75 @@ function encodePhoto(photo) {
     reader.onerror = () => reject(new Error('No se pudo leer el JPG preparado.'));
     reader.readAsDataURL(photo);
   });
+}
+
+function flushPhotos(ctx) {
+  const sync = ctx.sync;
+  if (!updatesAllowed(ctx) || !sync?.ready || sync.photoWork.size || sync.photoError) return;
+  const job = [...ctx.local.values()].find(job => job.source && ctx.values[job.id]?.version === 1
+    && ctx.values[job.id].photo === undefined && !sync.photoDone.has(job.id));
+  if (!job) return;
+  sync.photoWork.add(job.id);
+  (async () => {
+    try {
+      const jpeg = await encodePhoto(await resizePhoto(await jpegSource(job), 1000, .6));
+      if (ctx.sync !== sync || !updatesAllowed(ctx) || ctx.values[job.id]?.photo !== undefined) return;
+      await sync.room.update({ [`imagenes/${job.id}`]: jpeg, [`remitos/${job.id}/photo`]: true });
+      sync.photoDone.add(job.id);
+    } catch {
+      if (ctx.sync === sync) sync.photoError = true;
+    } finally {
+      sync.photoWork.delete(job.id);
+      updateSync();
+      if (sync.photoDone.has(job.id)) flushPhotos(ctx);
+    }
+  })();
+}
+
+function forgetPhoto(id) {
+  const url = photoUrls.get(id);
+  if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
+  photoUrls.delete(id);
+}
+
+async function photoAction(event) {
+  const button = event.target.closest('button[data-photo]');
+  const id = button?.closest('article')?.dataset.id;
+  const ctx = workspace;
+  const receipt = ctx?.remote.get(id);
+  if (!receipt) return;
+  const job = ctx.local.get(id);
+  const shared = ctx.scope !== 'local';
+  if (button.dataset.photo === 'remove' && !window.confirm('¿Quitar solo la foto de este remito? Su transcripción se conserva.')) return;
+  const feedback = button.closest('.photo-block').querySelector('[data-photo-feedback]');
+  button.disabled = true;
+  feedback.textContent = '';
+  try {
+    if (button.dataset.photo === 'remove') {
+      if (shared) {
+        if (!updatesAllowed(ctx)) throw new Error('Conectate a la sala para quitar la foto.');
+        await ctx.sync.room.update({ [`imagenes/${id}`]: null, [`remitos/${id}/photo`]: false });
+      }
+      if (job) {
+        delete job.source;
+        delete job.preview;
+        await storeRecords([job]);
+      }
+      forgetPhoto(id);
+    } else if (!photoUrls.has(id)) {
+      if (shared) {
+        if (!ctx.sync?.online) throw new Error('Conectate a la sala para ver la foto.');
+        const snapshot = await ctx.sync.room.child('imagenes').child(id).once('value');
+        const jpeg = snapshot.val();
+        if (typeof jpeg !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(jpeg)) throw new Error('La foto no está disponible.');
+        if (workspace !== ctx || ctx.remote.get(id)?.photo !== true) return;
+        photoUrls.set(id, `data:image/jpeg;base64,${jpeg}`);
+      } else if (job?.source) photoUrls.set(id, URL.createObjectURL(job.preview || job.source));
+    }
+    if (workspace === ctx) render();
+  } catch (error) {
+    feedback.textContent = error.message || 'No se pudo acceder a la foto.';
+  } finally { button.disabled = false; }
 }
 
 async function addPhotos(files) {
@@ -645,9 +784,13 @@ async function processPhotos(status) {
           pending = outcome.pending;
           break;
         }
-        job.receipt = { id: job.id, ...outcome.receipt };
+        job.receipt = { id: job.id, ...outcome.receipt,
+          lines: outcome.receipt.lines.map((line, order) => ({ ...line, key: newLineKey(), order })) };
+        job.payload = publicReceipt(job.receipt);
+        job.pending = ctx.scope !== 'local';
         job.status = 'done';
         job.error = '';
+        await storeRecords([job]).catch(storeError);
         completed++;
       } catch (error) {
         job.status = 'failed';
@@ -657,6 +800,7 @@ async function processPhotos(status) {
       }
       recalculate(ctx);
       if (workspace !== ctx) break;
+      flush(ctx);
       progress.value = index + 1;
       render();
       if (index < selected.length - 1) await sleep(PAUSE);
@@ -681,7 +825,7 @@ async function processPhotos(status) {
 }
 
 function receiptList() {
-  return [...localReceipts(workspace), ...workspace.remote.values()].sort((a, b) => b.id.localeCompare(a.id));
+  return [...workspace.remote.values()].sort((a, b) => b.id.localeCompare(a.id));
 }
 
 function resultFor(receipt, index) {
@@ -714,7 +858,7 @@ function editField(field, label, value, editable, wide = false) {
   return `<label class="field${wide ? ' wide' : ''}">${label}${editor}</label>`;
 }
 
-function lineMarkup(line, index, editable) {
+function lineMarkup(line, editable) {
   const highlight = editable ? `<label class="check"><input type="checkbox" data-field="resaltado" ${line.resaltado ? 'checked' : ''}> Resaltado rosa</label>`
     : `<span class="hint">${line.resaltado ? 'Resaltado rosa' : 'Sin resaltar'}</span>`;
   const confidence = editable ? `<label class="field">Confianza <select data-field="confianza">${['alta', 'media', 'baja'].map(value => `<option${line.confianza === value ? ' selected' : ''}>${value}</option>`).join('')}</select></label>`
@@ -722,7 +866,7 @@ function lineMarkup(line, index, editable) {
   const compact = key => editable
     ? `<input type="text" data-field="${key}" aria-label="${lineFields[key]}" value="${html(line[key])}">`
     : `<span class="read-field">${html(line[key] || '—')}</span>`;
-  return `<tr data-line="${index}"><td data-label="Fecha">${compact('fecha_linea')}<span class="hint" data-effective-date></span></td>
+  return `<tr data-line="${line.key}"><td data-label="Fecha">${compact('fecha_linea')}<span class="hint" data-effective-date></span></td>
     <td data-label="Descripción">${editable ? `<textarea rows="2" data-field="descripcion" aria-label="Descripción">${html(line.descripcion)}</textarea>` : `<span class="read-field">${html(line.descripcion || '—')}</span>`}
       ${highlight}<details><summary>Devolución y notas <span class="hint" data-return-date></span></summary><div class="edit-grid">
       ${editField('fecha_devolucion', 'Fecha devuelta', line.fecha_devolucion, editable)}
@@ -732,47 +876,74 @@ function lineMarkup(line, index, editable) {
       </div></details></td><td data-label="Cantidad">${compact('cantidad')}</td><td data-label="Comparación" data-result></td></tr>`;
 }
 
-function makeCard(receipt, job) {
+function makeCard(receipt) {
   const card = document.createElement('article');
   card.className = 'receipt';
   card.dataset.id = receipt.id;
-  const editable = !!job;
-  let photo = '<p class="hint">Foto disponible en el navegador donde se cargó.</p>';
-  if (job) {
-    if (!photoUrls.has(receipt.id)) photoUrls.set(receipt.id, URL.createObjectURL(job.preview || job.source));
-    photo = `<figure tabindex="0" aria-label="Foto del remito"><img loading="lazy" src="${photoUrls.get(receipt.id)}" alt="Foto de ${html(job.name)}"></figure>
-      <label class="check">Zoom <input type="range" min="100" max="400" step="25" value="100" aria-label="Zoom de la foto"></label>
-      <p class="hint">${html(job.name)}</p>`;
-  }
   card.innerHTML = `<h3></h3><div class="receipt-head">${Object.entries(headerFields).map(([field, label]) =>
-    editField(field, label, receipt[field], editable, field === 'observacion')).join('')}</div>
-    <div class="receipt-layout"><div class="photo-block">${photo}</div><div class="review">
+    editField(field, label, receipt[field], true, field === 'observacion')).join('')}</div>
+    <div class="receipt-layout"><div class="photo-block">
+      <div class="actions"><button type="button" class="small" data-photo="open" hidden>Ver foto</button>
+      <button type="button" class="small" data-photo="remove" hidden>Quitar foto</button></div>
+      <p class="hint" data-photo-status></p><p class="hint" data-photo-feedback role="status"></p>
+      <figure tabindex="0" aria-label="Foto del remito" hidden><img alt="Foto del remito"></figure>
+      <label class="check" data-photo-zoom hidden>Zoom <input type="range" min="100" max="400" step="25" value="100" aria-label="Zoom de la foto"></label>
+    </div><div class="review">
       ${receipt.lines.length ? `<div class="table-wrap"><table aria-label="Líneas del remito"><thead><tr><th>Fecha</th><th>Descripción</th><th>Cant.</th><th>Comparación</th></tr></thead>
-      <tbody>${receipt.lines.map((line, index) => lineMarkup(line, index, editable)).join('')}</tbody></table></div>`
+      <tbody>${receipt.lines.map(line => lineMarkup(line, true)).join('')}</tbody></table></div>`
     : '<p class="empty">El remito no tiene líneas transcritas.</p>'}
-      ${editable ? '<div class="receipt-foot"><button type="button" class="small" data-action="add">Agregar línea</button></div>' : ''}</div></div>`;
+      <div class="receipt-foot"><button type="button" class="small" data-action="add">Agregar línea</button></div></div></div>`;
   return card;
 }
 
-function renderStatus(cell, result, editable) {
-  const signature = JSON.stringify([result.state, result.chosen, result.decision, result.conflict, result.date, result.line.cantidad,
-    result.receipt.numero_remito, result.candidates?.map(({ row }) => row.fila), !!workspace.excel]);
+function renderPhoto(card, receipt, job) {
+  const cloud = workspace.scope !== 'local';
+  const available = cloud ? receipt.photo === true : !!job?.source;
+  if (!available) forgetPhoto(receipt.id);
+  const url = photoUrls.get(receipt.id);
+  card.querySelector('[data-photo="open"]').hidden = !available || !!url;
+  card.querySelector('[data-photo="remove"]').hidden = !available;
+  card.querySelector('[data-photo-status]').textContent = available ? ''
+    : cloud && receipt.photo === undefined && job?.source ? 'Compartiendo foto…' : 'Foto no disponible';
+  card.querySelector('figure').hidden = card.querySelector('[data-photo-zoom]').hidden = !url;
+  const image = card.querySelector('figure img');
+  if (url && image.getAttribute('src') !== url) image.src = url;
+  if (!url) image.removeAttribute('src');
+}
+
+function renderStatus(cell, result) {
+  const mark = result.line.verificado;
+  const signature = JSON.stringify([result.state, result.chosen, result.decision, result.conflict, result.stale, result.date, result.line.cantidad,
+    result.receipt.numero_remito, result.candidates?.map(({ row }) => row.fila), !!workspace.excel, mark]);
   if (cell.dataset.signature === signature) return;
   cell.dataset.signature = signature;
   const chosen = result.chosen ? formatRow(result.chosen, result) : '';
   const action = (id, label) => `<button type="button" class="small" data-action="${id}">${label}</button>`;
   const buttons = [];
-  if (editable && result.state !== 'skipped') {
+  if (result.state !== 'skipped') {
     if (result.chosen && !result.decision) buttons.push(action('confirm', 'Confirmar'));
     if (workspace.excel) buttons.push(action('choose', result.chosen ? 'Elegir otra fila' : result.candidates?.length ? 'Ver candidatos' : 'Buscar en Excel'));
     if (result.decision !== 'absent') buttons.push(action('absent', 'No está en el Excel'));
     if (result.decision) buttons.push(action('undo', 'Reabrir'));
   }
+  const canVerify = mark || ['ok', 'doubtful', 'missing'].includes(result.state);
   cell.innerHTML = `<span class="status ${result.state}">${states[result.state]}</span>${chosen}
     ${result.decision ? `<p class="details-text">${decisions[result.decision]}</p>` : ''}
     ${result.conflict ? '<p class="details-text">La fila ya está asignada a otra línea.</p>' : ''}
-    ${result.state === 'pending' && editable ? '<p class="hint">Cargá el Excel para comparar.</p>' : ''}
+    ${result.stale ? '<p class="details-text">La fila elegida cambió en el Excel de la sala.</p>' : ''}
+    ${result.state === 'pending' ? '<p class="hint">Cargá el Excel para comparar.</p>' : ''}
+    ${canVerify ? `<label class="check"><input type="checkbox" data-verify ${mark ? 'checked' : ''}> ✓ Verificado</label>` : ''}
+    ${mark ? `<p class="details-text">${html(mark.por)} · ${loadTime.format(mark.fecha)}</p>` : ''}
     ${buttons.length ? `<div class="actions">${buttons.join('')}</div>` : ''}`;
+}
+
+function renderFields(container, data) {
+  for (const field of container.querySelectorAll('[data-field]')) {
+    if (field === document.activeElement) continue;
+    const value = data[field.dataset.field];
+    if (field.type === 'checkbox') field.checked = !!value;
+    else if (field.value !== value) field.value = value;
+  }
 }
 
 function selectOptions(id, values, all) {
@@ -799,40 +970,50 @@ function render() {
   }
   selectOptions('person', receipts.map(receipt => receipt.persona), 'Todas');
   selectOptions('work', receipts.map(receipt => receipt.obra_o_vehiculo), 'Todas');
-  const totals = { ok: 0, doubtful: 0, missing: 0, reviewed: 0 };
+  const totals = { ok: 0, doubtful: 0, missing: 0, reviewed: 0, verified: 0 };
+  const filter = $('verified-filter').value;
   let visible = 0;
   const container = $('receipts');
   receipts.forEach((receipt, position) => {
     const job = ctx.local.get(receipt.id);
     let entry = cards.get(receipt.id);
-    if (!entry || entry.length !== receipt.lines.length || entry.receipt !== receipt) {
-      const card = makeCard(receipt, job);
+    const lineKeys = receipt.lines.map(line => line.key).join(' ');
+    const editing = document.activeElement?.matches('[data-field]') && entry?.card.contains(document.activeElement);
+    if (!entry || (entry.lineKeys !== lineKeys && !editing)) {
+      const card = makeCard(receipt);
       entry?.card.remove();
-      entry = { card, length: receipt.lines.length, receipt };
+      entry = { card, lineKeys };
       cards.set(receipt.id, entry);
     }
     const { card } = entry;
     if (container.children[position] !== card) container.insertBefore(card, container.children[position] || null);
     card.querySelector('h3').textContent = receipt.numero_remito ? `Remito ${receipt.numero_remito}` : 'Remito sin número';
+    renderFields(card.querySelector('.receipt-head'), receipt);
+    renderPhoto(card, receipt, job);
     const dates = datesFor(receipt);
-    const rows = card.querySelectorAll('tr[data-line]');
+    const rows = new Map([...card.querySelectorAll('tr[data-line]')].map(row => [row.dataset.line, row]));
     let compared = 0, finished = 0, rowVisible = false;
-    rows.forEach((row, index) => {
+    receipt.lines.forEach((line, index) => {
       const result = resultFor(receipt, index);
       if (['ok', 'doubtful', 'missing'].includes(result.state)) totals[result.state]++;
       if (result.state !== 'skipped') compared++;
       if (result.decision) finished++;
+      if (line.verificado) totals.verified++;
+      const row = rows.get(line.key);
+      if (!row) return;
+      renderFields(row, line);
       row.classList.toggle('highlighted', result.line.resaltado);
-      row.hidden = $('only-issues').checked && !['doubtful', 'missing'].includes(result.state);
+      row.hidden = ($('only-issues').checked && !['doubtful', 'missing'].includes(result.state))
+        || (filter !== 'all' && !!line.verificado !== (filter === 'yes'));
       rowVisible ||= !row.hidden;
       const label = dates[index].label;
       row.querySelector('[data-effective-date]').textContent = label !== result.line.fecha_linea ? label : '';
       row.querySelector('[data-return-date]').textContent = dates[index].returnLabel ? `· ${dates[index].returnLabel}` : '';
-      renderStatus(row.querySelector('[data-result]'), result, !!job);
+      renderStatus(row.querySelector('[data-result]'), result);
     });
     if (compared && finished === compared) totals.reviewed++;
     card.hidden = ($('person').value && $('person').value !== receipt.persona) || ($('work').value && $('work').value !== receipt.obra_o_vehiculo)
-      || ($('only-issues').checked && !rowVisible);
+      || (($('only-issues').checked || filter !== 'all') && !rowVisible);
     if (!card.hidden) visible++;
   });
   for (const [key, count] of Object.entries(totals)) $(`count-${key}`).textContent = count;
@@ -844,73 +1025,68 @@ function render() {
   updateSync();
 }
 
-function resetLine(line) {
-  line.elegida = null;
-  line.decision = '';
-  line.estado = '';
+const linePath = (receipt, key) => receipt.id + '/lines/' + key;
+
+function changeLine(receipt, key, fields) {
+  const path = linePath(receipt, key);
+  return changeReceipt(Object.fromEntries(Object.entries(fields).map(([field, value]) => [path + '/' + field, value])));
 }
 
 function editReceipt(event) {
-  const field = event.target.dataset.field;
-  const id = event.target.closest('article')?.dataset.id;
-  const receipt = workspace?.local.get(id)?.receipt;
-  if (!field || !receipt) return;
-  const index = event.target.closest('tr')?.dataset.line;
-  const value = field === 'resaltado' ? event.target.checked : text(event.target.value);
-  const datesBefore = datesFor(receipt);
-  if (index === undefined) {
-    if (receipt[field] === value) return;
-    receipt[field] = value;
-    if (['numero_remito', 'persona', 'obra_o_vehiculo'].includes(field)) receipt.lines.forEach(resetLine);
-  } else {
-    const line = receipt.lines[index];
-    if (line[field] === value) return;
-    line[field] = value;
-    if (['fecha_linea', 'descripcion', 'cantidad'].includes(field)) resetLine(line);
+  const control = event.target;
+  const id = control.closest('article')?.dataset.id;
+  const receipt = workspace?.remote.get(id);
+  if (!receipt) return;
+  const key = control.closest('tr')?.dataset.line;
+  const line = receipt.lines.find(line => line.key === key);
+  if (control.hasAttribute('data-verify') && line) {
+    let mark = null;
+    if (control.checked) {
+      const stored = localStorage.getItem(REVIEWER);
+      const name = text(stored || window.prompt('¿Con qué nombre querés verificar remitos?')).slice(0, 120);
+      if (!name) { control.checked = false; return; }
+      if (!stored) localStorage.setItem(REVIEWER, name);
+      mark = { por: name, fecha: Date.now() };
+    }
+    changeLine(receipt, key, { verificado: mark });
+    return;
   }
-  if (field === 'fecha' || field === 'fecha_linea') {
-    datesFor(receipt).forEach((date, i) => {
-      if (!same(date.delivery, datesBefore[i].delivery)) resetLine(receipt.lines[i]);
-    });
-  }
-  recalculate(workspace);
-  // Dejar que el clic que sacó el foco llegue al botón antes de actualizar los resultados.
-  setTimeout(render, 0);
+  const field = control.dataset.field;
+  if (!field) return;
+  const value = field === 'resaltado' ? control.checked : text(control.value);
+  if (line && line[field] !== value) changeLine(receipt, key, { [field]: value });
+  else if (!key && receipt[field] !== value) changeReceipt({ [id + '/' + field]: value });
 }
 
-function doLineAction(event) {
+async function doLineAction(event) {
   const button = event.target.closest('button[data-action]');
   const id = button?.closest('article')?.dataset.id;
-  const receipt = workspace?.local.get(id)?.receipt;
+  const receipt = workspace?.remote.get(id);
   if (!receipt) return;
-  const index = Number(button.closest('tr')?.dataset.line);
+  const key = button.closest('tr')?.dataset.line;
   const action = button.dataset.action;
   if (action === 'add') {
-    const line = Object.fromEntries(Object.keys(lineFields).map(field => [field, field === 'resaltado' ? false : '']));
-    receipt.lines.push({ ...line, confianza: 'media' });
-  } else if (action === 'remove') {
-    if (!window.confirm('¿Quitar esta línea de la transcripción?')) return;
-    const before = datesFor(receipt);
-    receipt.lines.splice(index, 1);
-    datesFor(receipt).forEach((date, i) => {
-      if (!same(date.delivery, before[i + (i >= index ? 1 : 0)].delivery)) resetLine(receipt.lines[i]);
-    });
-  } else if (action === 'choose') {
-    openChooser(receipt, index);
+    const newKey = newLineKey();
+    const order = receipt.lines.length ? receipt.lines.at(-1).order + 1 : 0;
+    await changeReceipt({ [linePath(receipt, newKey)]: publicLine({ confianza: 'media' }, order) });
+    cards.get(id)?.card.querySelector('[data-line="' + newKey + '"] textarea')?.focus();
     return;
-  } else {
-    const result = resultFor(receipt, index);
-    if (action === 'confirm' && result.chosen) Object.assign(result.line, { decision: 'confirmed', elegida: result.chosen });
-    if (action === 'absent') Object.assign(result.line, { decision: 'absent', elegida: null });
-    if (action === 'undo') resetLine(result.line);
   }
-  recalculate(workspace);
-  render();
-  if (action === 'add') cards.get(id)?.card.querySelector('tr:last-child textarea')?.focus();
+  const index = receipt.lines.findIndex(line => line.key === key);
+  if (index < 0) return;
+  if (action === 'remove') {
+    if (window.confirm('¿Quitar esta línea de la transcripción?')) changeLine(receipt, key, { deleted: true });
+    return;
+  }
+  if (action === 'choose') { openChooser(receipt, key); return; }
+  const result = resultFor(receipt, index);
+  if (action === 'confirm' && result.chosen) changeLine(receipt, key, { decision: 'confirmed', elegida: result.chosen, estado: 'ok' });
+  if (action === 'absent') changeLine(receipt, key, { decision: 'absent', elegida: null, estado: 'missing' });
+  if (action === 'undo') changeLine(receipt, key, { decision: '', elegida: null, estado: 'pending' });
 }
 
-function openChooser(receipt, index) {
-  chooser = { id: receipt.id, index, page: 0 };
+function openChooser(receipt, key) {
+  chooser = { id: receipt.id, key, page: 0 };
   $('manual-search').value = '';
   renderChooser();
   $('chooser').showModal();
@@ -923,9 +1099,10 @@ function rowAvailable(row, result) {
 }
 
 function renderChooser() {
-  const receipt = workspace?.local.get(chooser?.id)?.receipt;
-  if (!receipt || !workspace.excel || !receipt.lines[chooser.index]) return;
-  const result = resultFor(receipt, chooser.index);
+  const receipt = workspace?.remote.get(chooser?.id);
+  const index = receipt?.lines.findIndex(line => line.key === chooser.key) ?? -1;
+  if (index < 0 || !workspace.excel) return;
+  const result = resultFor(receipt, index);
   $('chooser-line').textContent = result.line.descripcion || 'Línea sin descripción';
   $('suggestions').innerHTML = result.candidates?.length ? '<h3>Candidatos sugeridos</h3>' + result.candidates.map(({ row }) => formatRow(row, result, true)).join('') : '';
   const words = normalize($('manual-search').value).split(' ').filter(Boolean);
@@ -944,52 +1121,176 @@ function renderChooser() {
 function chooseRow(event) {
   const number = Number(event.target.closest('[data-pick]')?.dataset.pick);
   const row = workspace?.excel?.byRow.get(number);
-  const receipt = workspace?.local.get(chooser?.id)?.receipt;
-  if (!row || !receipt) return;
-  const result = resultFor(receipt, chooser.index);
+  const receipt = workspace?.remote.get(chooser?.id);
+  const index = receipt?.lines.findIndex(line => line.key === chooser.key) ?? -1;
+  if (!row || index < 0) return;
+  const result = resultFor(receipt, index);
   if (!rowAvailable(row, result)) {
     renderChooser();
     return notice('Esa fila acaba de asignarse a otra línea. Elegí una fila disponible.', true);
   }
-  Object.assign(result.line, { decision: 'manual', elegida: chosenRow(row) });
   $('chooser').close();
-  recalculate(workspace);
-  render();
+  changeLine(receipt, result.line.key, { decision: 'manual', elegida: chosenRow(row), estado: 'ok' });
+}
+
+function useWorkbook(ctx, workbook) {
+  ctx.workbook = workbook;
+  ctx.excel = workbook ? indexWorkbook(workbook.rows) : null;
+  recalculate(ctx);
+  if (workspace === ctx) render();
+}
+
+async function receiveExcel(ctx, sync, meta) {
+  sync.excelMeta = meta;
+  if (ctx.excelUpload) return;
+  if (!meta) {
+    if (!ctx.workbook) return;
+    useWorkbook(ctx, null);
+    await storeRecords([], [[ctx.scope, 'excel']]).catch(storeError);
+    return;
+  }
+  if (ctx.workbook?.revision === meta.revision || sync.readingExcel === meta.revision) return;
+  const revision = meta.revision;
+  if (!/^r[a-z0-9-]+$/i.test(revision) || !Number.isSafeInteger(meta.blocks) || meta.blocks < 0) {
+    excelFeedback('Los datos del Excel de la sala son inválidos.', true);
+    return;
+  }
+  sync.readingExcel = revision;
+  updateControls();
+  try {
+    const ref = sync.excelRef.child('bloques').child(revision);
+    const rows = [];
+    for (let i = 0; i < meta.blocks; i++) {
+      const snapshot = await ref.child('b' + i).once('value');
+      if (ctx.sync !== sync || sync.excelMeta?.revision !== revision || ctx.excelUpload) return;
+      const block = snapshot.val();
+      if (!block) throw new Error();
+      rows.push(...Object.values(block));
+    }
+    if (rows.length !== meta.count) throw new Error();
+    rows.sort((a, b) => a.fila - b.fila);
+    const workbook = { id: 'excel', scope: ctx.scope, ...meta, rows };
+    await storeRecords([workbook]);
+    if (ctx.sync === sync && sync.excelMeta?.revision === revision && !ctx.excelUpload) useWorkbook(ctx, workbook);
+  } catch {
+    if (ctx.sync === sync && sync.excelMeta?.revision === revision && !ctx.excelUpload) {
+      sync.excelError = true;
+      excelFeedback('No se pudo descargar el Excel de la sala. Podés reintentar la sincronización.', true);
+    }
+  } finally {
+    if (sync.readingExcel === revision) sync.readingExcel = null;
+    if (workspace === ctx) { updateControls(); updateSync(); }
+  }
+}
+
+async function discardExcelRevision(sync, meta, keep) {
+  if (/^r[a-z0-9-]+$/i.test(meta?.revision || '') && meta.revision !== keep) {
+    await sync.excelRef.child('bloques').child(meta.revision).remove();
+  }
+}
+
+async function flushExcel(ctx) {
+  const sync = ctx.sync;
+  const upload = ctx.excelUpload;
+  if (!upload || !updatesAllowed(ctx) || sync.writingExcel || sync.excelError) return;
+  sync.writingExcel = true;
+  updateControls();
+  try {
+    const blocks = excelBlocks(upload.rows);
+    const ref = sync.excelRef.child('bloques').child(upload.revision);
+    for (const [index, block] of blocks.entries()) {
+      if (!updatesAllowed(ctx) || ctx.sync !== sync) return;
+      await ref.child('b' + index).set(block);
+    }
+    if (!updatesAllowed(ctx) || ctx.sync !== sync) return;
+    const meta = { revision: upload.revision, name: upload.name, loadedAt: upload.loadedAt, count: upload.rows.length, blocks: blocks.length };
+    let previous;
+    const outcome = await sync.excelRef.child('actual').transaction(current => {
+      previous = current;
+      return meta;
+    }, undefined, false);
+    if (ctx.sync !== sync || !outcome.committed) return;
+    const workbook = { ...upload, id: 'excel' };
+    await storeRecords([workbook], [[ctx.scope, 'excel-queued']]);
+    ctx.excelUpload = null;
+    useWorkbook(ctx, workbook);
+    if (sync.excelMeta?.revision !== workbook.revision) {
+      const latest = (await sync.excelRef.child('actual').once('value')).val();
+      if (ctx.sync === sync) receiveExcel(ctx, sync, latest);
+    }
+    discardExcelRevision(sync, previous, upload.revision).catch(() => {});
+    if (workspace === ctx) excelFeedback('');
+  } catch {
+    if (ctx.sync === sync) {
+      sync.excelError = true;
+      excelFeedback('El Excel está disponible en este navegador. Reintentá la sincronización para compartirlo.', true);
+    }
+  } finally {
+    sync.writingExcel = false;
+    if (workspace === ctx) { updateControls(); updateSync(); }
+  }
 }
 
 async function loadWorkbook(file) {
   const ctx = workspace;
-  if (!ctx || !file || loadingExcel) return;
+  if (!ctx || !file || loadingExcel || ctx.sync?.writingExcel) return;
+  if (!/\.xlsx$/i.test(file.name)) return excelFeedback('Elegí un archivo .xlsx.', true);
   loadingExcel = true;
   updateControls();
-  $('excel-info').textContent = 'Leyendo Excel…';
-  notice('');
+  excelFeedback('');
   try {
-    if (!/\.xlsx$/i.test(file.name)) throw new Error('Elegí un archivo .xlsx.');
     const xlsx = await dependency('XLSX', SHEET_JS);
     const rows = readWorkbook(xlsx, await file.arrayBuffer());
-    const workbook = { id: 'excel', scope: ctx.scope, name: file.name, rows };
+    if (workspace !== ctx) return;
+    const shared = ctx.scope !== 'local';
+    const workbook = { id: shared ? 'excel-queued' : 'excel', scope: ctx.scope, name: file.name,
+      rows: shared ? excelBlocks(rows).flatMap(Object.values) : rows, loadedAt: Date.now(),
+      ...(shared && { revision: newId() }) };
     await storeRecords([workbook]);
-    const excel = indexWorkbook(rows);
-    for (const receipt of localReceipts(ctx)) {
-      for (const line of receipt.lines) {
-        if (!line.elegida) continue;
-        const refreshed = excel.byRow.get(line.elegida.fila);
-        const identity = row => ['fecha', 'codigo', 'herramienta', 'persona', 'obra'].map(key => normalize(row?.[key]));
-        if (!refreshed || !same(identity(refreshed), identity(line.elegida))) resetLine(line);
-        else line.elegida = chosenRow(refreshed);
-      }
+    const previous = ctx.excelUpload;
+    ctx.excelUpload = shared ? workbook : null;
+    useWorkbook(ctx, workbook);
+    if (shared && ctx.sync) {
+      ctx.sync.excelError = false;
+      discardExcelRevision(ctx.sync, previous, ctx.sync.excelMeta?.revision).catch(() => {});
+      flushExcel(ctx);
     }
-    ctx.workbook = workbook;
-    ctx.excel = excel;
-    recalculate(ctx);
-    render();
   } catch (error) {
-    if (workspace === ctx) notice(`No se pudo cargar el Excel. ${error.message}`, true);
+    if (workspace === ctx) excelFeedback('No se pudo cargar el Excel. ' + error.message, true);
   } finally {
     loadingExcel = false;
     updateControls();
+    updateSync();
   }
+}
+
+async function removeWorkbook() {
+  const ctx = workspace;
+  if (!ctx || loadingExcel || ctx.sync?.writingExcel) return;
+  const local = ctx.scope === 'local';
+  if (!local && !updatesAllowed(ctx)) return excelFeedback('Conectate a la sala para quitar el Excel.', true);
+  if (!window.confirm(local ? '¿Quitar el Excel de este navegador?' : '¿Quitar el Excel para todos en la sala?')) return;
+  loadingExcel = true;
+  updateControls();
+  try {
+    const sync = ctx.sync;
+    let previous;
+    const queued = ctx.excelUpload;
+    if (!local) {
+      const outcome = await sync.excelRef.child('actual').transaction(current => {
+        previous = current;
+        return null;
+      }, undefined, false);
+      if (!outcome.committed || ctx.sync !== sync) return;
+      sync.excelError = false;
+    }
+    ctx.excelUpload = null;
+    await storeRecords([], [[ctx.scope, 'excel'], [ctx.scope, 'excel-queued']]);
+    useWorkbook(ctx, null);
+    if (!local) await Promise.all([discardExcelRevision(sync, previous), discardExcelRevision(sync, queued)]);
+    excelFeedback('');
+  } catch { excelFeedback('No se pudo completar la eliminación del Excel.', true); }
+  finally { loadingExcel = false; updateControls(); updateSync(); }
 }
 
 async function download(format) {
@@ -1068,6 +1369,7 @@ $('save-model').onclick = () => {
   } catch { keyFeedback('No se pudo guardar el modelo en este navegador.', true); }
 };
 $('choose-excel').onclick = () => $('excel-file').click();
+$('remove-excel').onclick = removeWorkbook;
 $('excel-file').onchange = event => { loadWorkbook(event.target.files[0]); event.target.value = ''; };
 $('choose-images').onclick = () => $('images').click();
 $('images').onchange = event => { addPhotos([...event.target.files]); event.target.value = ''; };
@@ -1082,8 +1384,12 @@ $('include-all').onchange = event => {
   render();
 };
 for (const id of ['person', 'work', 'only-issues']) $(id).onchange = render;
+$('verified-filter').value = ['all', 'yes', 'no'].includes(localStorage.getItem(VERIFIED_FILTER)) ? localStorage.getItem(VERIFIED_FILTER) : 'all';
+$('verified-filter').onchange = event => { localStorage.setItem(VERIFIED_FILTER, event.target.value); render(); };
 $('receipts').addEventListener('change', editReceipt);
 $('receipts').addEventListener('click', doLineAction);
+$('receipts').addEventListener('click', photoAction);
+$('receipts').addEventListener('focusout', event => { if (event.target.matches('[data-field]')) setTimeout(render, 0); });
 $('receipts').addEventListener('input', event => {
   if (event.target.type === 'range') event.target.closest('.photo-block').querySelector('img').style.width = `${event.target.value}%`;
 });

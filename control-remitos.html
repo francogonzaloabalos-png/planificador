@@ -29,7 +29,7 @@
     .controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin-bottom:14px}
     .stack{display:grid;gap:9px} .control-grid,.receipt-head,.edit-grid{display:grid;gap:8px;grid-template-columns:repeat(2,minmax(0,1fr))}
     .receipt-head{grid-template-columns:repeat(4,minmax(0,1fr));margin:10px 0 12px} .wide{grid-column:1/-1}
-    .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 12px}
+    .stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:0 0 12px}
     .stat{background:var(--paper);border:1px solid var(--line);border-top:3px solid var(--tone,#75887c);border-radius:8px;padding:8px 12px;font-size:.87rem}
     .stat strong{display:block;font-size:1.55rem;color:var(--tone,var(--ink));line-height:1.12;font-variant-numeric:tabular-nums}
     .ok{--tone:var(--ok)} .doubtful{--tone:var(--doubt)} .missing{--tone:var(--missing)}
@@ -76,12 +76,16 @@
       <div><h1>Control de remitos</h1><p class="hint">Transcribí fotos y revisá las entregas contra tu Excel.</p></div>
       <div class="actions"><span id="sync" class="sync" role="status">Modo local</span><button id="sync-retry" class="small" hidden>Reintentar sincronización</button></div>
     </header>
+    <p class="hint" style="margin-bottom:12px">Los datos y las fotos quedan visibles para quien tenga acceso a la sala</p>
 
     <div class="controls">
       <section class="panel stack" aria-labelledby="fuentes">
         <h2 id="fuentes">Excel y Gemini</h2>
-        <div class="actions"><button id="choose-excel">Cargar Excel (.xlsx)</button><span class="hint" id="excel-info" role="status">Excel sin cargar</span></div>
+        <div class="actions"><button id="choose-excel">Cargar Excel (.xlsx)</button><button id="remove-excel" type="button" hidden>Quitar Excel de la sala</button></div>
+        <p class="hint" id="excel-info" role="status">Excel sin cargar</p>
         <input type="file" id="excel-file" accept=".xlsx" hidden>
+        <p class="hint">Los datos del Excel quedan visibles para quien tenga acceso a la sala</p>
+        <p id="excel-feedback" class="hint" role="status" hidden></p>
         <details id="settings">
           <summary>Configurar Gemini</summary>
           <form class="control-grid" id="settings-form" style="margin-top:8px">
@@ -106,7 +110,7 @@
           <button id="retry" disabled>Reintentar fallidas</button>
         </div>
         <input type="file" id="images" accept=".jpg,.jpeg,.png,.heic,.heif,image/jpeg,image/png,image/heic,image/heif" multiple hidden>
-        <p class="hint">JPG, PNG o HEIC. Hasta 10 por tanda. Las fotos se guardan en este navegador y se envían a Gemini al transcribir.</p>
+        <p class="hint">JPG, PNG o HEIC. Hasta 10 por tanda. Al transcribir se envían a Gemini y se comparte una copia reducida en la sala.</p>
         <div id="progress-wrap" hidden><progress id="progress" value="0" max="1" aria-label="Avance de la tanda"></progress></div>
         <p id="task-status" class="hint" role="status"></p>
         <details id="queue-wrap" hidden><summary id="queue-summary">Fotos cargadas</summary><ul id="queue" class="queue"></ul></details>
@@ -119,11 +123,13 @@
         <div class="stat doubtful"><strong id="count-doubtful">0</strong>⚠️ Dudoso</div>
         <div class="stat missing"><strong id="count-missing">0</strong>❌ No encontrado</div>
         <div class="stat"><strong id="count-reviewed">0</strong>Remitos revisados</div>
+        <div class="stat"><strong id="count-verified">0</strong>Líneas verificadas</div>
       </div>
       <div class="toolbar">
         <div class="filters">
           <label class="check"><input id="include-all" type="checkbox"> Comparar todas las líneas</label>
           <label class="check"><input id="only-issues" type="checkbox"> Solo ⚠️ y ❌</label>
+          <label class="check">Verificación <select id="verified-filter"><option value="all">Todas</option><option value="yes">Solo verificadas</option><option value="no">Solo no verificadas</option></select></label>
           <label class="check">Persona <select id="person"><option value="">Todas</option></select></label>
           <label class="check">Obra <select id="work"><option value="">Todas</option></select></label>
         </div>

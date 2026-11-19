@@ -86,6 +86,10 @@ export function readWorkbook(xlsx, bytes) {
   const workbook = xlsx.read(bytes, { type: 'array', sheets: 'BASE DE DATOS' });
   const sheet = workbook.Sheets['BASE DE DATOS'];
   if (!sheet?.['!ref']) throw new Error('El archivo debe tener una hoja «BASE DE DATOS».');
+  return readBaseRows(xlsx, sheet, !!workbook.Workbook?.WBProps?.date1904);
+}
+
+function readBaseRows(xlsx, sheet, date1904) {
   const range = xlsx.utils.decode_range(sheet['!ref']);
   const cell = (r, c) => sheet[xlsx.utils.encode_cell({ r, c })];
   const headers = new Map();
@@ -104,7 +108,7 @@ export function readWorkbook(xlsx, bytes) {
     for (const [field, label] of Object.entries(excelColumns)) {
       const entry = cell(r, headers.get(label));
       row[field] = field === 'fecha'
-        ? excelDate(entry, xlsx, !!workbook.Workbook?.WBProps?.date1904)
+        ? excelDate(entry, xlsx, date1904)
         : text(field === 'remito' ? entry?.w ?? entry?.v : entry?.v);
     }
     rows.push(row);
@@ -240,6 +244,7 @@ export function chosenRow(row) {
 }
 
 export const lineId = (receipt, index) => `${receipt.id}/${index}`;
+const rowIdentity = ['fecha', 'codigo', 'herramienta', 'persona', 'obra'];
 
 // Reservar primero decisiones explícitas y filas publicadas por otros navegadores.
 // Si dos líneas reclaman el mismo mejor candidato, ambas requieren elección humana.
@@ -259,17 +264,22 @@ export function compareReceipts(local, remote, excel, includeAll) {
       const explicit = line.decision === 'manual' || line.decision === 'confirmed';
       const date = dates[index].delivery;
       const result = { id, receipt, line, index, date, candidates: [], chosen: null, state: 'pending', decision: line.decision };
+      const savedRow = line.elegida;
+      const currentRow = excel && savedRow && excel.byRow.get(savedRow.fila);
+      const stale = !!(explicit && excel && savedRow && (!currentRow
+        || rowIdentity.some(field => normalize(savedRow[field]) !== normalize(currentRow[field]))));
       results.set(id, result);
       if (!compared) result.state = 'skipped';
       else if (line.decision === 'absent') result.state = 'missing';
-      else if (explicit && line.elegida && !sharedRows.has(line.elegida.fila) && !used.has(line.elegida.fila)) {
-        result.chosen = line.elegida;
+      else if (explicit && savedRow && !stale && !sharedRows.has(savedRow.fila) && !used.has(savedRow.fila)) {
+        result.chosen = currentRow ? chosenRow(currentRow) : savedRow;
         result.state = 'ok';
-        used.set(line.elegida.fila, id);
+        used.set(savedRow.fila, id);
       } else if (explicit) {
         result.state = 'doubtful';
         result.decision = '';
-        result.conflict = true;
+        result.stale = stale;
+        result.conflict = !stale;
         if (excel) waiting.push(result);
       } else if (excel) waiting.push(result);
       else if (line.elegida && (sharedRows.has(line.elegida.fila) || used.has(line.elegida.fila))) {
@@ -292,8 +302,8 @@ export function compareReceipts(local, remote, excel, includeAll) {
   }
   for (const result of waiting) {
     const [first, second] = result.candidates;
-    if (!first) result.state = result.conflict ? 'doubtful' : 'missing';
-    else if (first.clear && claims.get(first.row.fila) === 1 && (!second || first.score - second.score >= .09)) {
+    if (!first) result.state = result.conflict || result.stale ? 'doubtful' : 'missing';
+    else if (!result.stale && first.clear && claims.get(first.row.fila) === 1 && (!second || first.score - second.score >= .09)) {
       result.state = 'ok';
       result.chosen = chosenRow(first.row);
       used.set(first.row.fila, result.id);
@@ -402,54 +412,56 @@ export async function transcribe({ key, model, base64 }) {
   return { ...validateFields(parsed, ocrHeader), lines: parsed.lineas.map(line => validateFields(line, ocrLine)) };
 }
 
-// Firebase omite nodos vacíos. Guardar una versión explícita permite recuperar un remito sin líneas.
-export function publicReceipt(receipt, comparison) {
+// La clave de línea perdura aunque se agregue o quite otra línea.
+export const newLineKey = () => `l${crypto.randomUUID()}`;
+
+export function publicLine(line, order) {
+  const fields = Object.fromEntries(Object.keys(lineFields).map(key => [key, key === 'resaltado' ? !!line[key] : text(line[key])]));
+  return { ...fields, order, estado: line.estado || 'pending', decision: line.decision || '',
+    ...(line.elegida && { elegida: chosenRow(line.elegida) }), ...(line.verificado && { verificado: line.verificado }) };
+}
+
+export function publicReceipt(receipt) {
   const header = Object.fromEntries(Object.keys(headerFields).map(key => [key, text(receipt[key])]));
-  const lines = {};
-  receipt.lines.forEach((line, index) => {
-    const result = comparison.get(lineId(receipt, index));
-    lines[`l${index}`] = Object.fromEntries(Object.keys(lineFields).map(key => [key, key === 'resaltado' ? !!line[key] : text(line[key])]));
-    lines[`l${index}`].estado = result?.state || 'pending';
-    lines[`l${index}`].decision = result?.decision || '';
-    if (result?.chosen) lines[`l${index}`].elegida = chosenRow(result.chosen);
-  });
-  return { version: 1, ...header, ...(Object.keys(lines).length && { lines }) };
+  const lines = Object.fromEntries(receipt.lines.map((line, index) => [line.key || `l${index}`, publicLine(line, line.order ?? index)]));
+  return { version: 1, ...header, ...(typeof receipt.photo === 'boolean' && { photo: receipt.photo }),
+    ...(receipt.lines.length && { lines }) };
 }
 
 export function receiveReceipt(id, value) {
   if (value?.version !== 1) return null;
   const header = Object.fromEntries(Object.keys(headerFields).map(key => [key, text(value[key])]));
-  const lines = Object.keys(value.lines || {}).filter(key => /^l\d+$/.test(key))
-    .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1))).map(key => {
-      const line = value.lines[key];
-      return { ...Object.fromEntries(Object.keys(lineFields).map(field => [field, field === 'resaltado' ? line?.[field] === true : text(line?.[field])])),
+  const lines = Object.entries(value.lines || {}).filter(([key, line]) => /^l[a-z0-9-]+$/i.test(key) && line && !line.deleted)
+    .map(([key, line]) => {
+      const order = Number.isFinite(line.order) ? line.order : Number(key.slice(1)) || 0;
+      const mark = line.verificado;
+      return { key, order, ...Object.fromEntries(Object.keys(lineFields).map(field => [field, field === 'resaltado' ? line[field] === true : text(line[field])])),
         decision: Object.hasOwn(decisions, line?.decision) ? line.decision : '',
-        estado: Object.hasOwn(states, line?.estado) ? line.estado : 'pending', elegida: chosenRow(line?.elegida) };
-    });
-  return { id, ...header, lines };
+        estado: Object.hasOwn(states, line?.estado) ? line.estado : 'pending', elegida: chosenRow(line?.elegida),
+        verificado: mark && text(mark.por) && Number.isFinite(mark.fecha) ? { por: text(mark.por), fecha: mark.fecha } : null };
+    }).sort((a, b) => a.order - b.order || a.key.localeCompare(b.key));
+  return { id, ...header, photo: value.photo, lines };
 }
 
-// La transacción vuelve a comprobar las reservas cuando hay dos publicaciones simultáneas.
-export function mergePublished(current, changes) {
-  const merged = { ...current };
-  const reserved = new Set();
-  for (const [id, value] of Object.entries(merged)) {
-    if (changes.has(id)) continue;
-    for (const line of receiveReceipt(id, value)?.lines || []) if (line.elegida) reserved.add(line.elegida.fila);
-  }
-  for (const [id, value] of changes) {
-    const receipt = { ...value };
-    if (value.lines) receipt.lines = { ...value.lines };
-    for (const [key, line] of Object.entries(receipt.lines || {})) {
-      if (!line.elegida) continue;
-      if (reserved.has(line.elegida.fila)) {
-        const { elegida, ...fields } = line;
-        receipt.lines[key] = { ...fields, estado: 'doubtful', decision: '' };
-      } else reserved.add(line.elegida.fila);
+// Cada bloque queda muy por debajo del límite de escritura del SDK.
+export function excelBlocks(rows) {
+  const columns = Object.keys(excelColumns).filter(key => key !== 'condicion');
+  const encoder = new TextEncoder();
+  const blocks = [];
+  let block = {}, bytes = 0;
+  for (const source of rows) {
+    const row = { fila: source.fila, ...Object.fromEntries(columns.map(key => [key, text(source[key])])) };
+    const size = encoder.encode(JSON.stringify(row)).length + 20;
+    if (bytes && bytes + size > 512 * 1024) {
+      blocks.push(block);
+      block = {};
+      bytes = 0;
     }
-    merged[id] = receipt;
+    block[`r${row.fila}`] = row;
+    bytes += size;
   }
-  return merged;
+  if (bytes) blocks.push(block);
+  return blocks;
 }
 
 export function exportRows(receipts, comparison) {
