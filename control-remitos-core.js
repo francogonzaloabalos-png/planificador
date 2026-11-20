@@ -1,4 +1,7 @@
-const GEMINI_MODELS = ['gemini-3.8-flash', 'gemini-3.5-flash-lite'];
+export const GEMINI_MODELS = [
+  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite' },
+  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' }
+];
 
 export const excelColumns = {
   fecha: 'FECHA', codigo: 'CODIGO', herramienta: 'HERRAMIENTA EQUIPO', detalle: 'DETALLE',
@@ -380,12 +383,14 @@ export class GeminiQuotaError extends Error {
   }
 }
 
-export async function transcribe({ key, base64 }) {
+export async function transcribe({ key, base64, modelId }) {
+  const selected = GEMINI_MODELS.find(model => model.id === modelId);
+  const models = selected ? [selected] : GEMINI_MODELS;
   const body = JSON.stringify({
     contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: base64 } }] }],
     generationConfig: { responseMimeType: 'application/json', responseSchema }
   });
-  for (const model of GEMINI_MODELS) {
+  for (const { id: model } of models) {
     const path = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
     let response, json;
     try {
@@ -407,6 +412,7 @@ export async function transcribe({ key, base64 }) {
     }
     return parseTranscription(json);
   }
+  if (selected) throw new Error('El modelo seleccionado no está disponible para esta clave (404). Elegí otro modelo o Automático.');
   throw new Error('Gemini respondió con error 404 para los modelos automáticos. Revisá el acceso del proyecto a la API de Gemini.');
 }
 

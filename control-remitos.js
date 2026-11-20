@@ -1,13 +1,14 @@
 import {
   headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
   differences, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
-  receiveReceipt, exportRows, excelDay, GeminiQuotaError, publicLine, newLineKey, excelBlocks
-} from './control-remitos-core.js';
+  receiveReceipt, exportRows, excelDay, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS
+} from './control-remitos-core.js?v=selector-gemini';
 
 const $ = id => document.getElementById(id);
 const LEGACY_KEY = 'control_remitos_gemini_key_v1';
 const LOCAL_KEYS = 'control_remitos_gemini_keys_v1';
 const SHARE_KEYS = 'control_remitos_share_keys_v1';
+const MODEL_CHOICE = 'control_remitos_model_choice_v1';
 const REVIEWER = 'control_remitos_reviewer_v1';
 const VERIFIED_FILTER = 'control_remitos_verified_filter_v1';
 const MAX_BATCH = 10;
@@ -438,6 +439,7 @@ function renderKeys() {
   $('share-keys').disabled = busy || !!ctx?.savingKeys;
   $('key-warning').hidden = !prefersSharing();
   $('gemini-key').disabled = $('add-key').disabled = disabled;
+  $('gemini-model').disabled = busy;
   const mode = shared ? 'Claves compartidas de la sala' : 'Claves privadas de este navegador';
   const status = shared && !ready ? 'Sin acceso a la configuración de la sala'
     : !entries.length ? 'No hay claves de Gemini configuradas' : '';
@@ -700,7 +702,7 @@ async function addPhotos(files) {
   } catch { jobMessage('No hay espacio o acceso para guardar las fotos en este navegador.', true); }
 }
 
-async function transcribeWithKeys(ctx, base64, onStatus) {
+async function transcribeWithKeys(ctx, base64, modelId, onStatus) {
   const attempted = new Set();
   let waited = false;
   while (workspace === ctx) {
@@ -709,7 +711,7 @@ async function transcribeWithKeys(ctx, base64, onStatus) {
     if (next) {
       attempted.add(next.value);
       try {
-        return { receipt: await transcribe({ key: next.value, base64 }) };
+        return { receipt: await transcribe({ key: next.value, base64, modelId }) };
       } catch (error) {
         if (!(error instanceof GeminiQuotaError)) throw error;
         if (workspace !== ctx) break;
@@ -747,6 +749,7 @@ async function processPhotos(status) {
     return jobMessage(waiting ? 'No se pudieron leer las claves de la sala. También podés usar tus claves privadas.'
       : 'Agregá una clave de Gemini en Control de remitos.', true);
   }
+  const modelId = $('gemini-model').value;
   busy = true;
   updateControls();
   const run = async () => {
@@ -773,7 +776,7 @@ async function processPhotos(status) {
         const source = await jpegSource(job);
         if (heicFile(job.source)) job.preview = source;
         const base64 = await encodePhoto(await resizePhoto(source));
-        const outcome = await transcribeWithKeys(ctx, base64, message => jobMessage(`${label} · ${message}`));
+        const outcome = await transcribeWithKeys(ctx, base64, modelId, message => jobMessage(`${label} · ${message}`));
         if (outcome.pending) {
           pending = outcome.pending;
           break;
@@ -1386,6 +1389,13 @@ $('manual-prev').onclick = () => { chooser.page--; renderChooser(); };
 $('manual-next').onclick = () => { chooser.page++; renderChooser(); };
 $('export-xlsx').onclick = () => download('xlsx');
 $('export-csv').onclick = () => download('csv');
+
+const modelSelect = $('gemini-model');
+modelSelect.options[0].text = `Automático (prioriza ${GEMINI_MODELS[0].label})`;
+modelSelect.append(...GEMINI_MODELS.map(({ id, label }) => new Option(label, id)));
+const savedModel = localStorage.getItem(MODEL_CHOICE);
+modelSelect.value = GEMINI_MODELS.some(({ id }) => id === savedModel) ? savedModel : '';
+modelSelect.onchange = () => localStorage.setItem(MODEL_CHOICE, modelSelect.value);
 
 refreshRoom();
 window.addEventListener('storage', refreshRoom);

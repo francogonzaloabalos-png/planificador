@@ -68,7 +68,7 @@
       td::before{content:attr(data-label);display:block;color:var(--soft);font-weight:650;font-size:.8rem;margin-bottom:2px}
     }
   </style>
-  <script type="module" src="control-remitos.js"></script>
+  <script type="module" src="control-remitos.js?v=selector-gemini"></script>
 </head>
 <body>
   <main>
@@ -95,7 +95,9 @@
             <ol id="gemini-keys" class="key-list wide" aria-label="Claves de Gemini en orden de uso"></ol>
             <label class="field">Nueva clave <input type="password" id="gemini-key" autocomplete="off" spellcheck="false" placeholder="Pegá una clave de Gemini"></label>
             <div class="actions"><button type="submit" id="add-key" class="small">Agregar clave</button></div>
-            <p class="hint wide">El modelo se elige automáticamente.</p>
+            <label class="field wide">Modelo de Gemini
+              <select id="gemini-model"><option value="">Automático</option></select>
+            </label>
             <p class="hint wide" id="key-feedback" role="status"></p>
           </form>
         </details>
