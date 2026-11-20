@@ -131,7 +131,11 @@ function tokens(value) {
 }
 
 function materialWords(value) {
-  return tokens(text(value).replace(/\[ilegible\]/gi, '').replace(/\bs\s*\/\s*(?=identificaci[oó]n\b)/gi, 'sin '));
+  return tokens(text(value).replace(/\[ilegible\]/gi, '')
+    .replace(/\bs\s*\/\s*(?=identificaci[oó]n\b)/gi, 'sin ')
+    .replace(/\b(?:(?:talle|t)[\s.:-]*(\d{1,3})|(\d{1,3})\s+talle)\b/gi,
+      (_, prefixSize, suffixSize) => ` ${prefixSize || suffixSize}TALLE `)
+    .replace(/(\d)(?=m\b)/gi, '$1 '));
 }
 
 function wordScore(a, b) {
@@ -171,28 +175,70 @@ function contextMatches(a, b) {
 
 const materialUnits = new Set(['KG', 'MT', 'LT', 'CM', 'MM']);
 const isMaterialWord = word => !/^\d/.test(word) && !materialUnits.has(word);
+const conflictingNumbers = (left, right) =>
+  left.some(word => !right.includes(word)) && right.some(word => !left.includes(word));
 
-function toolScore(printed, expected, strict = false, score = wordScore) {
-  if (!printed.length || !expected.length) return 0;
-  const anchor = Math.max(...printed.slice(0, 2).filter(isMaterialWord).map(word => score(word, expected[0])), 0);
-  if (anchor < .7 && (strict || !printed.some(word => isMaterialWord(word)
-    && expected.some(other => isMaterialWord(other) && score(word, other) >= .7)))) return 0;
-  const a = coverage(printed, expected, score), b = coverage(expected, printed, score);
-  const leftUnits = printed.filter(word => /^\d/.test(word));
-  const rightUnits = expected.filter(word => /^\d/.test(word));
-  const differentSize = leftUnits.length && rightUnits.length && !leftUnits.some(word => rightUnits.includes(word));
-  return .28 * anchor + .49 * b + .23 * a - (differentSize ? .18 : 0);
+function orderedMaterialWords(words, reference) {
+  const referenceWords = new Set(reference);
+  const ordered = [];
+  for (let index = 0; index < words.length; index++) {
+    const word = words[index], next = words[index + 1];
+    const combined = next ? word + next : '';
+    // Corregir un espacio de OCR si al otro lado existe exactamente la palabra unida.
+    if (next && isMaterialWord(word) && isMaterialWord(next) && combined.length >= 5 && referenceWords.has(combined)
+      && !(referenceWords.has(word) && referenceWords.has(next))) {
+      ordered.push(combined);
+      index++;
+    } else ordered.push(word);
+  }
+  return ordered.sort();
 }
 
-const percent = score => Math.max(0, Math.round(100 * score));
+function toolScore(printed, expected, score = wordScore) {
+  if (!printed.length || !expected.length) return 0;
+  const left = orderedMaterialWords(printed, expected), right = orderedMaterialWords(expected, printed);
+  const pairs = [];
+  left.forEach((word, i) => right.forEach((other, j) => {
+    const similarity = score(word, other);
+    if (similarity) pairs.push({ i, j, similarity });
+  }));
+  pairs.sort((a, b) => b.similarity - a.similarity);
+  const usedLeft = new Set(), usedRight = new Set();
+  let total = 0, anchor = 0, matchedWords = 0;
+  for (const { i, j, similarity } of pairs) {
+    if (usedLeft.has(i) || usedRight.has(j)) continue;
+    usedLeft.add(i);
+    usedRight.add(j);
+    total += similarity;
+    if (isMaterialWord(left[i]) && isMaterialWord(right[j])) {
+      anchor = Math.max(anchor, similarity);
+      matchedWords++;
+    }
+  }
+  if (anchor < .7) return 0;
+  const leftNumbers = left.filter(word => /^\d/.test(word)), rightNumbers = right.filter(word => /^\d/.test(word));
+  const differentSize = conflictingNumbers(leftNumbers, rightNumbers)
+    || conflictingNumbers(leftNumbers.filter(word => word.endsWith('TALLE')), rightNumbers.filter(word => word.endsWith('TALLE')));
+  const coverage = (total / left.length + total / right.length) / 2;
+  const similarity = .28 * anchor + .72 * coverage - (differentSize ? .18 : 0);
+  // Mantener como sugerencias los nombres con términos distintos en ambos lados o con medidas en conflicto.
+  const differentWords = matchedWords < left.filter(isMaterialWord).length && matchedWords < right.filter(isMaterialWord).length;
+  return differentSize || differentWords ? Math.min(similarity, .77) : similarity;
+}
+
+const percent = score => score >= 1 - Number.EPSILON ? 100 : Math.max(0, Math.min(99, Math.round(100 * score)));
 
 export function materialSimilarity(description, item) {
   return percent(toolScore(materialWords(description), materialWords(item)));
 }
 
 const missingText = value => !text(value) || /^(ILEGIBLE|SIN DATO|NO LEGIBLE|S N)$/.test(normalize(value));
-const remitoNumber = value => missingText(value) || normalize(value) === 'SN' ? ''
-  : normalize(value).replace(/^0+(?=\d)/, '').replace(/^N (?:RO )?0*(?=\d)/, '');
+function remitoNumber(value) {
+  const normalized = normalize(value);
+  return /\d/.test(normalized) ? normalized.replace(/^(?:N(?: RO)?|NRO|NUMERO)\s+(?=\d)/, '').replace(/^0+(?=\d)/, '') : '';
+}
+
+const minimumMaterialScore = .62;
 
 function number(value) {
   const original = text(value);
@@ -209,26 +255,33 @@ export function differences(receipt, line, date, row) {
   const qtyDiffers = delivered !== null && delivered !== recorded;
   if (qtyDiffers) warnings.push(`Cantidad distinta (${line.cantidad} / ${row.cantidad || 'vacía'})`);
   const printed = remitoNumber(receipt.numero_remito);
-  if (printed && printed !== remitoNumber(row.remito)) warnings.push(`Nº de remito distinto (${receipt.numero_remito} / ${row.remito || 'vacío'})`);
-  return { warnings, days, qtyDiffers };
+  const recordedNumber = row.remitoNumber ?? remitoNumber(row.remito);
+  const sameRemito = !!printed && printed === recordedNumber;
+  if (printed && !sameRemito) warnings.push(`Nº de remito distinto (${receipt.numero_remito} / ${row.remito || 'vacío'})`);
+  return { warnings, days, qtyDiffers, sameRemito };
 }
 
 export function indexWorkbook(rows) {
   const byDay = new Map();
+  const byRemito = new Map();
   const unknownDays = [];
   const wordsByTool = new Map();
   const items = rows.map(row => {
     if (!wordsByTool.has(row.herramienta)) wordsByTool.set(row.herramienta, materialWords(row.herramienta));
-    const item = { ...row, day: excelDay(row.fecha), words: wordsByTool.get(row.herramienta),
+    const item = { ...row, day: excelDay(row.fecha), remitoNumber: remitoNumber(row.remito), words: wordsByTool.get(row.herramienta),
       search: normalize([row.fila, ...Object.keys(excelColumns).map(key => row[key])].join(' ')) };
     if (item.day === null) unknownDays.push(item);
     else {
       if (!byDay.has(item.day)) byDay.set(item.day, []);
       byDay.get(item.day).push(item);
     }
+    if (item.remitoNumber) {
+      if (!byRemito.has(item.remitoNumber)) byRemito.set(item.remitoNumber, []);
+      byRemito.get(item.remitoNumber).push(item);
+    }
     return item;
   });
-  return { items, byDay, unknownDays, byRow: new Map(items.map(row => [row.fila, row])), materialMatches: new Map() };
+  return { items, byDay, byRemito, unknownDays, byRow: new Map(items.map(row => [row.fila, row])), materialMatches: new Map() };
 }
 
 function rank(receipt, line, date, excel) {
@@ -237,23 +290,30 @@ function rank(receipt, line, date, excel) {
     ? '' : receipt.obra_o_vehiculo.replace(/\[ilegible\]/gi, '');
   const printed = materialWords(line.descripcion);
   if (!printed.length) return [];
+  const printedNumber = remitoNumber(receipt.numero_remito);
   const candidates = [];
+  const sameDocument = excel.byRemito.get(printedNumber) || [];
   const pool = date?.day == null ? excel.items : excel.unknownDays.concat(
-    ...Array.from({ length: 7 }, (_, index) => excel.byDay.get(date.day + index - 3) || []));
+    ...Array.from({ length: 7 }, (_, index) => excel.byDay.get(date.day + index - 3) || []), sameDocument);
+  const seen = new Set();
   for (const row of pool) {
-    if ((person && !contextMatches(person, row.persona)) || (work && !contextMatches(work, row.obra))) continue;
-    const similarity = toolScore(printed, row.words, true);
-    if (similarity < .62) continue;
+    if (seen.has(row.fila)) continue;
+    seen.add(row.fila);
+    const sameRemito = !!printedNumber && printedNumber === row.remitoNumber;
+    const otherRemito = !!(printedNumber && row.remitoNumber) && !sameRemito;
+    const contextDiffers = (person && !contextMatches(person, row.persona)) || (work && !contextMatches(work, row.obra));
+    if (contextDiffers && !sameRemito) continue;
+    const similarity = toolScore(printed, row.words);
+    if (similarity < minimumMaterialScore) continue;
     const { days, qtyDiffers } = differences(receipt, line, date, row);
-    const sameNumber = person && remitoNumber(receipt.numero_remito) && remitoNumber(receipt.numero_remito) === remitoNumber(row.remito);
     const detail = tokens(`${row.codigo} ${row.detalle}`).filter(word => !row.words.includes(word));
     const detailScore = detail.some(word => word.length >= 3 && printed.includes(word)) ? .06 : 0;
-    const score = similarity + detailScore + (days == null ? -.06 : .10 - days * .025)
-      + (sameNumber ? .07 : 0) - (qtyDiffers ? .06 : 0);
-    const clear = similarity >= .78 && days != null && !qtyDiffers && line.confianza !== 'baja';
-    candidates.push({ row, score, clear, similarity: percent(similarity) });
+    const dateScore = days == null || days > 3 ? -.06 : .10 - days * .025;
+    const score = similarity + detailScore + dateScore - (contextDiffers ? .18 : 0) - (qtyDiffers ? .06 : 0);
+    const clear = similarity >= .78 && days != null && days <= 3 && !contextDiffers && !otherRemito && !qtyDiffers && line.confianza !== 'baja';
+    candidates.push({ row, score, clear, sameRemito, similarity: percent(similarity) });
   }
-  return candidates.sort((a, b) => b.score - a.score || a.row.fila - b.row.fila);
+  return candidates.sort((a, b) => Number(b.sameRemito) - Number(a.sameRemito) || b.score - a.score || a.row.fila - b.row.fila);
 }
 
 // El parecido del material se reutiliza entre líneas y al recalcular con el mismo Excel.
@@ -271,7 +331,7 @@ function similarMaterials(excel, description) {
   };
   const matches = [];
   for (const row of excel.items) {
-    if (!byTool.has(row.words)) byTool.set(row.words, percent(toolScore(printed, row.words, false, score)));
+    if (!byTool.has(row.words)) byTool.set(row.words, percent(toolScore(printed, row.words, score)));
     const similarity = byTool.get(row.words);
     if (similarity > 0) matches.push({ row, similarity });
   }
@@ -336,15 +396,17 @@ export function compareReceipts(local, remote, excel, includeAll) {
   }
   const claims = new Map();
   for (const result of waiting) {
-    result.candidates = rank(result.receipt, result.line, result.date, excel)
-      .filter(({ row }) => !used.has(row.fila) && !sharedRows.has(row.fila));
+    const ranked = rank(result.receipt, result.line, result.date, excel);
+    result.hasMatchingRemito = ranked[0]?.sameRemito === true;
+    result.candidates = ranked.filter(({ row }) => !used.has(row.fila) && !sharedRows.has(row.fila));
     const [first] = result.candidates;
-    if (first) claims.set(first.row.fila, (claims.get(first.row.fila) || 0) + 1);
+    if (first && (!result.hasMatchingRemito || first.sameRemito)) claims.set(first.row.fila, (claims.get(first.row.fila) || 0) + 1);
   }
   for (const result of waiting) {
     const [first, second] = result.candidates;
     if (!first) result.state = result.conflict || result.stale ? 'doubtful' : 'missing';
-    else if (!result.stale && first.clear && claims.get(first.row.fila) === 1 && (!second || first.score - second.score >= .09)) {
+    else if (!result.stale && first.clear && (!result.hasMatchingRemito || first.sameRemito) && claims.get(first.row.fila) === 1
+      && (!second || (first.sameRemito && !second.sameRemito) || first.score - second.score >= .09)) {
       result.state = 'ok';
       result.chosen = chosenRow(first.row);
       used.set(first.row.fila, result.id);
@@ -355,13 +417,16 @@ export function compareReceipts(local, remote, excel, includeAll) {
     const strict = result.candidates.filter(available);
     if (!result.chosen && (result.state === 'doubtful' || result.state === 'missing') && result.decision !== 'absent' && excel) {
       const contextualScores = new Map(strict.map(({ row, score }) => [row.fila, score]));
+      const printedNumber = remitoNumber(result.receipt.numero_remito);
+      const sameRemito = row => !!printedNumber && printedNumber === row.remitoNumber;
+      const preferred = candidate => candidate.similarity >= percent(minimumMaterialScore) && sameRemito(candidate.row);
       const distance = row => result.date?.day != null && row.day != null ? Math.abs(result.date.day - row.day) : Infinity;
       result.candidates = similarMaterials(excel, result.line.descripcion).slice()
-        .sort((a, b) => b.similarity - a.similarity
+        .sort((a, b) => Number(preferred(b)) - Number(preferred(a)) || b.similarity - a.similarity
           || Number(available(b)) - Number(available(a))
           || (contextualScores.get(b.row.fila) ?? 0) - (contextualScores.get(a.row.fila) ?? 0)
           || distance(a.row) - distance(b.row) || a.row.fila - b.row.fila)
-        .slice(0, 3).map(candidate => ({ ...candidate, assigned: !available(candidate) }));
+        .slice(0, 3).map(candidate => ({ ...candidate, sameRemito: sameRemito(candidate.row), assigned: !available(candidate) }));
       if (result.state === 'missing' && (result.candidates[0]?.similarity ?? 0) >= 35) result.state = 'doubtful';
     } else result.candidates = strict.slice(0, 3);
   }

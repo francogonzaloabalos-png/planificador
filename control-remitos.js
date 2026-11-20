@@ -2,7 +2,7 @@ import {
   headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
   differences, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
   receiveReceipt, exportRows, excelDay, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, materialSimilarity
-} from './control-remitos-core.js?v=verificacion-y-detalle';
+} from './control-remitos-core.js?v=similitud-flexible';
 
 const $ = id => document.getElementById(id);
 const LEGACY_KEY = 'control_remitos_gemini_key_v1';
@@ -1561,15 +1561,18 @@ function similarityBadge(value) {
   return `<span class="similarity ${level}"><strong>${value}%</strong> similitud del material</span>`;
 }
 
+const matchingRemitoLabel = '<div class="matching-remito">Coincide el Nº de remito</div>';
+
 function formatRow(row, result, { canChoose = false, assigned = false,
   similarity = materialSimilarity(result.line.descripcion, row.herramienta) } = {}) {
   const printable = { ...row, day: row.day ?? excelDay(row.fecha) };
-  const warnings = differences(result.receipt, result.line, result.date, printable).warnings;
+  const { warnings, sameRemito } = differences(result.receipt, result.line, result.date, printable);
   return `<div class="row-detail"><b>Fila ${row.fila} · ${html(row.herramienta)}</b>
     ${similarityBadge(similarity)}
     <div>${html(row.fecha || 'Fecha vacía')} · ${html(row.persona || 'Persona vacía')} · ${html(row.obra || 'Obra vacía')}</div>
     <div>Detalle: ${html(row.detalle || '—')} · Cantidad: ${html(row.cantidad || '—')}</div>
     <div>MOVIMIENTO: ${html(row.movimiento || '—')} · Nº REMITO: ${html(row.remito || '—')}</div>
+    ${sameRemito ? matchingRemitoLabel : ''}
     ${warnings.length ? `<div class="warning">${warnings.map(html).join(' · ')}</div>` : ''}
     ${assigned ? '<div class="warning">Fila ya asignada a otra línea.</div>' : ''}
     ${canChoose ? `<button type="button" class="small" data-pick="${row.fila}">Elegir fila ${row.fila}</button>` : ''}</div>`;
@@ -1660,7 +1663,8 @@ function renderStatus(cell, result) {
   cell.dataset.signature = signature;
   const chosen = result.chosen ? formatRow(result.chosen, result) : '';
   const suggestion = !chosen && best ? `<div class="row-detail"><b>Mejor sugerencia · Fila ${best.row.fila} · ${html(best.row.herramienta)}</b>
-    <div>${similarityBadge(best.similarity)}</div>${best.assigned ? '<div class="warning">Fila ya asignada a otra línea.</div>' : ''}</div>` : '';
+    <div>${similarityBadge(best.similarity)}</div>${best.sameRemito ? matchingRemitoLabel : ''}
+    ${best.assigned ? '<div class="warning">Fila ya asignada a otra línea.</div>' : ''}</div>` : '';
   const noSuggestion = !chosen && !best && workspace.excel && result.decision !== 'absent' && ['missing', 'doubtful'].includes(result.state);
   const action = (id, label) => `<button type="button" class="small" data-action="${id}">${label}</button>`;
   const buttons = [];
