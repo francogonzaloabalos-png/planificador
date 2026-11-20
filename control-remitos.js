@@ -1,8 +1,8 @@
 import {
   headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
   differences, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
-  receiveReceipt, exportRows, excelDay, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS
-} from './control-remitos-core.js?v=selector-gemini';
+  receiveReceipt, exportRows, excelDay, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, materialSimilarity
+} from './control-remitos-core.js?v=revision-remitos';
 
 const $ = id => document.getElementById(id);
 const LEGACY_KEY = 'control_remitos_gemini_key_v1';
@@ -32,6 +32,8 @@ let loadingExcel = false;
 let chooser = null;
 const cards = new Map();
 const photoUrls = new Map();
+let previewUrl;
+let previewTicket = 0;
 const libraries = new Map();
 
 function notice(message, error = false) {
@@ -134,6 +136,7 @@ async function refreshRoom() {
   workspace = null;
   excelFeedback('');
   if ($('chooser').open) $('chooser').close();
+  if ($('photo-preview').open) $('photo-preview').close();
   for (const [id] of photoUrls) forgetPhoto(id);
   photoUrls.clear();
   cards.clear();
@@ -153,7 +156,7 @@ async function refreshRoom() {
     const local = new Map(records.filter(record => record.type === 'photo').map(job => [job.id, job]));
     const values = records.find(record => record.id === 'cloud')?.values || {};
     workspace = {
-      scope, workbook, excel: workbook ? indexWorkbook(workbook.rows) : null, local,
+      scope, workbook, excel: workbook ? indexWorkbook(workbook.rows) : null, local, selectedPhotos: new Set(),
       values, remote: new Map(), excelUpload, patches: new Map(records.filter(record => record.type === 'patch')
         .sort((a, b) => a.id.localeCompare(b.id)).map(record => [record.id, record])),
       includeAll: records.find(record => record.id === 'options')?.includeAll === true,
@@ -540,8 +543,8 @@ function updateControls() {
   $('remove-excel').disabled = loadingExcel || !!ctx?.sync?.writingExcel;
   $('remove-excel').textContent = ctx?.scope === 'local' ? 'Quitar Excel local' : 'Quitar Excel de la sala';
   $('choose-images').disabled = !ctx || busy;
-  $('process').disabled = !ctx || busy || ![...ctx.local.values()].some(job => job.status === 'queued');
-  $('retry').disabled = !ctx || busy || ![...ctx.local.values()].some(job => job.status === 'failed');
+  $('process').disabled = !ctx || busy || !ctx.selectedPhotos.size;
+  for (const input of $('queue').querySelectorAll('[data-queue-select]')) input.disabled = busy;
   $('include-all').disabled = !ctx || !ctx.excel;
   $('include-all').checked = !!ctx?.includeAll;
   const workbook = ctx?.workbook;
@@ -554,12 +557,66 @@ function updateControls() {
 }
 
 function queueList() {
-  const jobs = [...workspace.local.values()].sort((a, b) => b.id.localeCompare(a.id));
+  const ctx = workspace;
+  const jobs = [...ctx.local.values()].sort((a, b) => b.id.localeCompare(a.id));
   $('queue-wrap').hidden = !jobs.length;
-  const labels = { queued: 'Pendiente', failed: 'Falló', done: 'Transcripta' };
-  const failed = jobs.filter(job => job.status === 'failed').length;
-  $('queue-summary').textContent = `Fotos cargadas (${jobs.length})${failed ? ` · ${failed} fallidas` : ''}`;
-  $('queue').innerHTML = jobs.map(job => `<li class="${job.status === 'failed' ? 'error' : ''}"><b>${html(job.name)}</b> · ${labels[job.status]}${job.error ? ` · ${html(job.error)}` : ''}</li>`).join('');
+  const markup = jobs.map(job => {
+    const name = html(job.name);
+    const selectable = job.status !== 'done';
+    const canPreview = job.source && ctx.remote.get(job.id)?.photo !== false;
+    const title = selectable ? `<label class="check queue-name"><input type="checkbox" data-queue-select="${job.id}" aria-label="Seleccionar ${name} para transcribir"> <strong>${name}</strong></label>`
+      : `<span class="queue-name"><strong>${name}</strong> · Transcripta</span>`;
+    return `<li><div class="queue-item">${title}${canPreview ? `<button type="button" class="small" data-queue-preview="${job.id}" aria-label="Ver foto ${name}">Ver foto</button>` : ''}</div>
+      ${job.error ? `<p class="hint error">${html(job.error)}</p>` : ''}</li>`;
+  }).join('');
+  const queue = $('queue');
+  if (queue.dataset.markup !== markup) {
+    queue.dataset.markup = markup;
+    queue.innerHTML = markup;
+  }
+  for (const input of queue.querySelectorAll('[data-queue-select]')) {
+    input.checked = ctx.selectedPhotos.has(input.dataset.queueSelect);
+    input.disabled = busy;
+  }
+}
+
+function selectQueuedPhoto(event) {
+  const input = event.target;
+  const ctx = workspace;
+  const id = input.dataset.queueSelect;
+  const job = ctx?.local.get(id);
+  if (!job || busy || job.status === 'done') return;
+  if (!input.checked) ctx.selectedPhotos.delete(id);
+  else if (ctx.selectedPhotos.size < MAX_BATCH) ctx.selectedPhotos.add(id);
+  else {
+    input.checked = false;
+    return jobMessage('Marcá hasta 10 fotos por tanda.', true);
+  }
+  updateControls();
+}
+
+async function previewQueuedPhoto(event) {
+  const id = event.target.closest('[data-queue-preview]')?.dataset.queuePreview;
+  const job = workspace?.local.get(id);
+  if (!job?.source) return;
+  const dialog = $('photo-preview');
+  const image = $('preview-image');
+  const status = $('preview-status');
+  const ticket = ++previewTicket;
+  $('preview-title').textContent = job.name;
+  image.hidden = true;
+  status.textContent = 'Cargando foto…';
+  dialog.showModal();
+  try {
+    const source = await jpegSource(job);
+    if (ticket !== previewTicket || !dialog.open) return;
+    previewUrl = URL.createObjectURL(source);
+    image.onload = () => { image.hidden = false; status.textContent = ''; };
+    image.onerror = () => { status.textContent = 'No se pudo abrir la foto.'; };
+    image.src = previewUrl;
+  } catch (error) {
+    if (ticket === previewTicket && dialog.open) status.textContent = error.message;
+  }
 }
 
 function heicFile(source) {
@@ -696,8 +753,9 @@ async function addPhotos(files) {
     await storeRecords(jobs);
     for (const job of jobs) ctx.local.set(job.id, job);
     if (workspace !== ctx) return;
-    jobMessage(`${jobs.length} ${jobs.length === 1 ? 'foto lista para transcribir' : 'fotos listas para transcribir'}.`);
+    jobMessage('Marcá las fotos que querés transcribir.');
     queueList();
+    $('queue-wrap').open = true;
     updateControls();
   } catch { jobMessage('No hay espacio o acceso para guardar las fotos en este navegador.', true); }
 }
@@ -739,9 +797,9 @@ async function transcribeWithKeys(ctx, base64, modelId, onStatus) {
   return { pending: 'Cambió el espacio de trabajo.' };
 }
 
-async function processPhotos(status) {
+async function processPhotos() {
   const ctx = workspace;
-  if (busy || !ctx) return;
+  if (busy || !ctx?.selectedPhotos.size) return;
   if (!activeKeys(ctx).length) {
     $('settings').open = true;
     $('gemini-key').focus();
@@ -761,7 +819,12 @@ async function processPhotos(status) {
     }
     recalculate(ctx);
     render();
-    const selected = [...ctx.local.values()].filter(job => job.status === status).slice(0, MAX_BATCH);
+    const selected = [];
+    for (const id of ctx.selectedPhotos) {
+      const job = ctx.local.get(id);
+      if (job && job.status !== 'done') selected.push(job);
+      else ctx.selectedPhotos.delete(id);
+    }
     if (!selected.length) return jobMessage('La tanda ya se procesó en otra pestaña.');
     const progress = $('progress');
     $('progress-wrap').hidden = false;
@@ -781,12 +844,13 @@ async function processPhotos(status) {
           pending = outcome.pending;
           break;
         }
-        job.receipt = { id: job.id, ...outcome.receipt,
+        job.receipt = { id: job.id, ...outcome.receipt, nombre_archivo: job.name,
           lines: outcome.receipt.lines.map((line, order) => ({ ...line, key: newLineKey(), order })) };
         job.payload = publicReceipt(job.receipt);
         job.pending = ctx.scope !== 'local';
         job.status = 'done';
         job.error = '';
+        ctx.selectedPhotos.delete(job.id);
         await storeRecords([job]).catch(storeError);
         completed++;
       } catch (error) {
@@ -836,6 +900,7 @@ function formatRow(row, result, canChoose = false) {
   const printable = { ...row, day: row.day ?? excelDay(row.fecha) };
   const warnings = differences(result.receipt, result.line, result.date, printable).warnings;
   return `<div class="row-detail"><b>Fila ${row.fila} · ${html(row.herramienta)}</b>
+    <div>Similitud del material: ${materialSimilarity(result.line.descripcion, row.herramienta)}%</div>
     <div>${html(row.fecha || 'Fecha vacía')} · ${html(row.persona || 'Persona vacía')} · ${html(row.obra || 'Obra vacía')}</div>
     <div>Detalle: ${html(row.detalle || '—')} · Cantidad: ${html(row.cantidad || '—')}</div>
     <div>MOVIMIENTO: ${html(row.movimiento || '—')} · Nº REMITO: ${html(row.remito || '—')}</div>
@@ -864,7 +929,8 @@ function lineMarkup(line, editable) {
     ? `<input type="text" data-field="${key}" aria-label="${lineFields[key]}" value="${html(line[key])}">`
     : `<span class="read-field">${html(line[key] || '—')}</span>`;
   return `<tr data-line="${line.key}"><td data-label="Fecha">${compact('fecha_linea')}<span class="hint" data-effective-date></span></td>
-    <td data-label="Descripción">${editable ? `<textarea rows="2" data-field="descripcion" aria-label="Descripción">${html(line.descripcion)}</textarea>` : `<span class="read-field">${html(line.descripcion || '—')}</span>`}
+    <td data-label="Descripción">${editable ? `<textarea rows="2" data-field="descripcion" aria-label="Descripción">${html(line.descripcion)}</textarea>
+      <button type="button" class="small" data-action="recompare" hidden>Volver a buscar en Excel</button>` : `<span class="read-field">${html(line.descripcion || '—')}</span>`}
       ${highlight}<details><summary>Devolución y notas <span class="hint" data-return-date></span></summary><div class="edit-grid">
       ${editField('fecha_devolucion', 'Fecha devuelta', line.fecha_devolucion, editable)}
       ${editField('cantidad_devuelta', 'Cantidad devuelta', line.cantidad_devuelta, editable)}
@@ -877,7 +943,8 @@ function makeCard(receipt) {
   const card = document.createElement('article');
   card.className = 'receipt';
   card.dataset.id = receipt.id;
-  card.innerHTML = `<h3></h3><div class="receipt-head">${Object.entries(headerFields).map(([field, label]) =>
+  card.innerHTML = `<details class="receipt-toggle"><summary class="receipt-summary"><span data-receipt-title></span><span class="hint" data-receipt-match></span></summary>
+    <div class="receipt-head">${Object.entries(headerFields).map(([field, label]) =>
     editField(field, label, receipt[field], true, field === 'observacion')).join('')}</div>
     <div class="receipt-layout"><div class="photo-block">
       <div class="actions"><button type="button" class="small" data-photo="open" hidden>Ver foto</button>
@@ -889,7 +956,7 @@ function makeCard(receipt) {
       ${receipt.lines.length ? `<div class="table-wrap"><table aria-label="Líneas del remito"><thead><tr><th>Fecha</th><th>Descripción</th><th>Cant.</th><th>Comparación</th></tr></thead>
       <tbody>${receipt.lines.map(line => lineMarkup(line, true)).join('')}</tbody></table></div>`
     : '<p class="empty">El remito no tiene líneas transcritas.</p>'}
-      <div class="receipt-foot"><button type="button" class="small" data-action="add">Agregar línea</button></div></div></div>`;
+      <div class="receipt-foot"><button type="button" class="small" data-action="add">Agregar línea</button></div></div></div></details>`;
   return card;
 }
 
@@ -910,8 +977,9 @@ function renderPhoto(card, receipt, job) {
 
 function renderStatus(cell, result) {
   const mark = result.line.verificado;
+  const best = result.candidates?.[0]?.row;
   const signature = JSON.stringify([result.state, result.chosen, result.decision, result.conflict, result.stale, result.date, result.line.cantidad,
-    result.receipt.numero_remito, result.candidates?.map(({ row }) => row.fila), !!workspace.excel, mark]);
+    result.line.descripcion, result.receipt.numero_remito, best, !!workspace.excel, mark]);
   if (cell.dataset.signature === signature) return;
   cell.dataset.signature = signature;
   const chosen = result.chosen ? formatRow(result.chosen, result) : '';
@@ -925,6 +993,7 @@ function renderStatus(cell, result) {
   }
   const canVerify = mark || ['ok', 'doubtful', 'missing'].includes(result.state);
   cell.innerHTML = `<span class="status ${result.state}">${states[result.state]}</span>${chosen}
+    ${!chosen && best ? `<p class="hint">Mejor candidato: ${materialSimilarity(result.line.descripcion, best.herramienta)}% de similitud</p>` : ''}
     ${result.decision ? `<p class="details-text">${decisions[result.decision]}</p>` : ''}
     ${result.conflict ? '<p class="details-text">La fila ya está asignada a otra línea.</p>' : ''}
     ${result.stale ? '<p class="details-text">La fila elegida cambió en el Excel de la sala.</p>' : ''}
@@ -978,27 +1047,33 @@ function render() {
     const editing = document.activeElement?.matches('[data-field]') && entry?.card.contains(document.activeElement);
     if (!entry || (entry.lineKeys !== lineKeys && !editing)) {
       const card = makeCard(receipt);
+      card.querySelector('.receipt-toggle').open = entry?.card.querySelector('.receipt-toggle').open ?? false;
       entry?.card.remove();
       entry = { card, lineKeys };
       cards.set(receipt.id, entry);
     }
     const { card } = entry;
     if (container.children[position] !== card) container.insertBefore(card, container.children[position] || null);
-    card.querySelector('h3').textContent = receipt.numero_remito ? `Remito ${receipt.numero_remito}` : 'Remito sin número';
+    const title = receipt.numero_remito ? `Remito ${receipt.numero_remito}` : 'Remito sin número';
+    const fileName = receipt.nombre_archivo || job?.name;
+    card.querySelector('[data-receipt-title]').textContent = fileName ? `${title} · ${fileName}` : title;
     renderFields(card.querySelector('.receipt-head'), receipt);
     renderPhoto(card, receipt, job);
     const dates = datesFor(receipt);
     const rows = new Map([...card.querySelectorAll('tr[data-line]')].map(row => [row.dataset.line, row]));
+    const matches = { ok: 0, doubtful: 0, missing: 0, pending: 0 };
     let compared = 0, finished = 0, rowVisible = false;
     receipt.lines.forEach((line, index) => {
       const result = resultFor(receipt, index);
       if (['ok', 'doubtful', 'missing'].includes(result.state)) totals[result.state]++;
+      if (Object.hasOwn(matches, result.state)) matches[result.state]++;
       if (result.state !== 'skipped') compared++;
       if (result.decision) finished++;
       if (line.verificado) totals.verified++;
       const row = rows.get(line.key);
       if (!row) return;
       renderFields(row, line);
+      row.querySelector('[data-action="recompare"]').hidden = !ctx.excel;
       row.classList.toggle('highlighted', result.line.resaltado);
       row.hidden = ($('only-issues').checked && !['doubtful', 'missing'].includes(result.state))
         || (filter !== 'all' && !!line.verificado !== (filter === 'yes'));
@@ -1008,6 +1083,12 @@ function render() {
       row.querySelector('[data-return-date]').textContent = dates[index].returnLabel ? `· ${dates[index].returnLabel}` : '';
       renderStatus(row.querySelector('[data-result]'), result);
     });
+    const checked = matches.ok + matches.doubtful + matches.missing;
+    const summary = [checked && `Coinciden ${matches.ok} de ${checked} líneas comparadas`,
+      matches.doubtful && `${matches.doubtful} ${matches.doubtful === 1 ? 'dudosa' : 'dudosas'}`,
+      matches.missing && `${matches.missing} sin coincidencia`,
+      matches.pending && `${matches.pending} ${matches.pending === 1 ? 'pendiente' : 'pendientes'} de comparar`].filter(Boolean).join(' · ');
+    card.querySelector('[data-receipt-match]').textContent = summary || (receipt.lines.length ? 'Sin líneas comparadas' : 'Sin renglones transcritos');
     if (compared && finished === compared) totals.reviewed++;
     card.hidden = ($('person').value && $('person').value !== receipt.persona) || ($('work').value && $('work').value !== receipt.obra_o_vehiculo)
       || (($('only-issues').checked || filter !== 'all') && !rowVisible);
@@ -1077,6 +1158,17 @@ async function doLineAction(event) {
   }
   if (action === 'choose') { openChooser(receipt, key); return; }
   const result = resultFor(receipt, index);
+  if (action === 'recompare' && workspace.excel) {
+    const line = result.line;
+    const fields = {};
+    if (!line.comparar) fields.comparar = true;
+    if (line.decision) fields.decision = '';
+    if (line.elegida) fields.elegida = null;
+    if (line.estado !== 'pending') fields.estado = 'pending';
+    if (Object.keys(fields).length) await changeLine(receipt, key, fields);
+    else { recalculate(workspace); render(); }
+    return;
+  }
   if (action === 'confirm' && result.chosen) changeLine(receipt, key, { decision: 'confirmed', elegida: result.chosen, estado: 'ok' });
   if (action === 'absent') changeLine(receipt, key, { decision: 'absent', elegida: null, estado: 'missing' });
   if (action === 'undo') changeLine(receipt, key, { decision: '', elegida: null, estado: 'pending' });
@@ -1362,8 +1454,17 @@ $('remove-excel').onclick = removeWorkbook;
 $('excel-file').onchange = event => { loadWorkbook(event.target.files[0]); event.target.value = ''; };
 $('choose-images').onclick = () => $('images').click();
 $('images').onchange = event => { addPhotos([...event.target.files]); event.target.value = ''; };
-$('process').onclick = () => processPhotos('queued');
-$('retry').onclick = () => processPhotos('failed');
+$('process').onclick = processPhotos;
+$('queue').addEventListener('change', selectQueuedPhoto);
+$('queue').addEventListener('click', previewQueuedPhoto);
+$('photo-preview').addEventListener('close', () => {
+  previewTicket++;
+  const image = $('preview-image');
+  image.onload = image.onerror = null;
+  image.removeAttribute('src');
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  previewUrl = null;
+});
 $('sync-retry').onclick = () => { if (workspace) connect(workspace, parentConnection()); };
 $('include-all').onchange = event => {
   const ctx = workspace;

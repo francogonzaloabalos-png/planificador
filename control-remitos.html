@@ -34,11 +34,15 @@
     .stat strong{display:block;font-size:1.55rem;color:var(--tone,var(--ink));line-height:1.12;font-variant-numeric:tabular-nums}
     .ok{--tone:var(--ok)} .doubtful{--tone:var(--doubt)} .missing{--tone:var(--missing)}
     .toolbar{gap:10px;margin-bottom:14px} .filters select{max-width:min(230px,75vw)}
-    .queue{margin:0;padding:0;list-style:none;max-height:155px;overflow:auto;font-size:.85rem}
+    .queue{margin:6px 0 0;padding:0;list-style:none;max-height:235px;overflow:auto;font-size:.85rem}
     .queue li{padding:5px 0;overflow-wrap:anywhere;border-top:1px solid var(--line)}
+    .queue-item{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap}
+    .queue-name{flex:1 1 170px;min-width:0;overflow-wrap:anywhere}
+    #preview-image{display:block;object-fit:contain;max-width:100%;max-height:72dvh;margin:auto}
     .key-list{list-style:none;margin:0;padding:0;display:grid;gap:5px}
     .key-list li{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:5px}
     #receipts{display:grid;gap:12px} #notice{margin-bottom:10px}
+    .receipt-summary{overflow-wrap:anywhere} .receipt-summary .hint{display:block;margin-top:4px;font-weight:400}
     .receipt-layout{display:grid;grid-template-columns:minmax(175px,28%) minmax(0,1fr);gap:15px;align-items:start}
     .photo-block{display:grid;gap:6px;min-width:0} .photo-block figure{max-height:540px;overflow:auto;margin:0;background:#ebf0eb;border:1px solid var(--line);border-radius:8px}
     .photo-block img{display:block;width:100%;height:auto} .photo-block input{width:min(120px,100%)}
@@ -68,7 +72,7 @@
       td::before{content:attr(data-label);display:block;color:var(--soft);font-weight:650;font-size:.8rem;margin-bottom:2px}
     }
   </style>
-  <script type="module" src="control-remitos.js?v=selector-gemini"></script>
+  <script type="module" src="control-remitos.js?v=revision-remitos"></script>
 </head>
 <body>
   <main>
@@ -107,14 +111,13 @@
         <h2 id="fotos">Fotos</h2>
         <div class="actions">
           <button id="choose-images">Agregar fotos</button>
-          <button id="process" class="primary" disabled>Transcribir pendientes</button>
-          <button id="retry" disabled>Reintentar fallidas</button>
+          <button id="process" class="primary" disabled>Transcribir seleccionadas</button>
         </div>
         <input type="file" id="images" accept=".jpg,.jpeg,.png,.heic,.heif,image/jpeg,image/png,image/heic,image/heif" multiple hidden>
         <p class="hint">JPG, PNG o HEIC. Hasta 10 por tanda. Al transcribir se envían a Gemini y se comparte una copia reducida en la sala.</p>
         <div id="progress-wrap" hidden><progress id="progress" value="0" max="1" aria-label="Avance de la tanda"></progress></div>
         <p id="task-status" class="hint" role="status"></p>
-        <details id="queue-wrap" hidden><summary id="queue-summary">Fotos cargadas</summary><ul id="queue" class="queue"></ul></details>
+        <details id="queue-wrap" hidden><summary>Fotos cargadas</summary><ul id="queue" class="queue"></ul></details>
       </section>
     </div>
 
@@ -141,6 +144,12 @@
       <p id="empty" class="empty">Agregá fotos para empezar o abrí el control desde una sala del planificador para ver sus resultados.</p>
     </section>
   </main>
+
+  <dialog id="photo-preview" aria-labelledby="preview-title">
+    <div class="top"><h2 id="preview-title">Vista previa</h2><form method="dialog"><button class="small">Cerrar</button></form></div>
+    <p id="preview-status" class="hint" role="status"></p>
+    <img id="preview-image" alt="Vista previa del remito" hidden>
+  </dialog>
 
   <dialog id="chooser" aria-labelledby="chooser-title">
     <div class="top"><h2 id="chooser-title">Elegir fila del Excel</h2><form method="dialog"><button class="small">Cerrar</button></form></div>
