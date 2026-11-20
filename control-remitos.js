@@ -2,7 +2,7 @@ import {
   headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
   differences, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
   receiveReceipt, exportRows, excelDay, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, materialSimilarity
-} from './control-remitos-core.js?v=revision-remitos';
+} from './control-remitos-core.js?v=carpetas-fotos';
 
 const $ = id => document.getElementById(id);
 const LEGACY_KEY = 'control_remitos_gemini_key_v1';
@@ -13,6 +13,8 @@ const REVIEWER = 'control_remitos_reviewer_v1';
 const VERIFIED_FILTER = 'control_remitos_verified_filter_v1';
 const MAX_BATCH = 10;
 const MAX_EDGE = 1600;
+const SHARED_PHOTO_EDGE = 1250;
+const SHARED_PHOTO_QUALITY = .72;
 const PAUSE = 1800;
 const SHEET_JS = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
 const HEIC = 'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
@@ -31,7 +33,10 @@ let busy = false;
 let loadingExcel = false;
 let chooser = null;
 const cards = new Map();
+const reviewFolders = new Map();
 const photoUrls = new Map();
+let removal;
+let move;
 let previewUrl;
 let previewTicket = 0;
 const libraries = new Map();
@@ -78,10 +83,11 @@ const database = new Promise((resolve, reject) => {
   request.onerror = () => reject(new Error('No se pudo abrir el almacenamiento de este navegador.'));
 });
 
-async function readRecords(scope) {
+async function readRecords(scope, id) {
   const db = await database;
   return new Promise((resolve, reject) => {
-    const request = db.transaction('records').objectStore('records').index('scope').getAll(scope);
+    const records = db.transaction('records').objectStore('records');
+    const request = id === undefined ? records.index('scope').getAll(scope) : records.get([scope, id]);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
@@ -137,10 +143,15 @@ async function refreshRoom() {
   excelFeedback('');
   if ($('chooser').open) $('chooser').close();
   if ($('photo-preview').open) $('photo-preview').close();
+  for (const id of ['remove-photo-dialog', 'move-photo-dialog']) if ($(id).open) $(id).close();
   for (const [id] of photoUrls) forgetPhoto(id);
   photoUrls.clear();
   cards.clear();
+  reviewFolders.clear();
   $('receipts').replaceChildren();
+  $('queue').replaceChildren();
+  delete $('queue').dataset.markup;
+  $('photo-storage').hidden = true;
   $('sync').textContent = 'Abriendo espacio de trabajo…';
   $('progress-wrap').hidden = true;
   $('queue-wrap').hidden = true;
@@ -155,8 +166,11 @@ async function refreshRoom() {
     const workbook = excelUpload || records.find(record => record.id === 'excel' && record.name !== 'BASE DE DATOS (CSV)');
     const local = new Map(records.filter(record => record.type === 'photo').map(job => [job.id, job]));
     const values = records.find(record => record.id === 'cloud')?.values || {};
+    const folders = records.find(record => record.id === 'folders-cloud')?.values || {};
+    const localFolders = new Map(records.filter(record => record.type === 'folder').map(folder => [folder.id, folder]));
     workspace = {
       scope, workbook, excel: workbook ? indexWorkbook(workbook.rows) : null, local, selectedPhotos: new Set(),
+      folders, localFolders, uploadFolder: '', deletingPhotos: new Set(),
       values, remote: new Map(), excelUpload, patches: new Map(records.filter(record => record.type === 'patch')
         .sort((a, b) => a.id.localeCompare(b.id)).map(record => [record.id, record])),
       includeAll: records.find(record => record.id === 'options')?.includeAll === true,
@@ -179,6 +193,7 @@ function detach(ctx) {
   try {
     if (sync.onKeys) sync.configRef.off('value', sync.onKeys);
     if (sync.onExcel) sync.excelRef.child('actual').off('value', sync.onExcel);
+    if (sync.onFolders) sync.foldersRef.off('value', sync.onFolders);
     sync.ref.off('value', sync.onValue);
     sync.connected.off('value', sync.onConnected);
   } catch { /* El planificador puede haber cerrado la app compartida. */ }
@@ -223,6 +238,7 @@ function connect(ctx, connection) {
     sync.ref = room.child('remitos');
     sync.configRef = room.child('config');
     sync.excelRef = room.child('excel');
+    sync.foldersRef = room.child('carpetas');
     sync.photoWork = new Set();
     sync.photoDone = new Set();
     listenKeys(ctx);
@@ -231,6 +247,17 @@ function connect(ctx, connection) {
     };
     sync.excelRef.child('actual').on('value', sync.onExcel, () => {
       if (ctx.sync === sync) excelFeedback('No se pudo leer el Excel de la sala.', true);
+    });
+    sync.onFolders = snapshot => {
+      if (ctx.sync !== sync) return;
+      ctx.folders = snapshot.val() || {};
+      storeRecords([{ id: 'folders-cloud', scope: ctx.scope, values: ctx.folders }]).catch(storeError);
+      render();
+    };
+    sync.foldersRef.on('value', sync.onFolders, () => {
+      if (ctx.sync !== sync) return;
+      sync.folderError = true;
+      updateSync();
     });
     sync.connected = db.ref('.info/connected');
     sync.onValue = snapshot => {
@@ -251,6 +278,7 @@ function connect(ctx, connection) {
       renderKeys();
       flush(ctx);
       flushExcel(ctx);
+      flushFolders(ctx);
       flushPhotos(ctx);
       updateControls();
     };
@@ -305,8 +333,9 @@ function updateSync() {
   const ctx = workspace;
   if (!ctx) return;
   const sync = ctx.sync;
-  const pending = [...ctx.local.values()].filter(job => job.pending).length + ctx.patches.size + Number(!!ctx.excelUpload);
-  const error = sync?.error || sync?.photoError || sync?.excelError;
+  const pending = [...ctx.local.values(), ...ctx.localFolders.values()].filter(record => record.pending).length
+    + ctx.patches.size + Number(!!ctx.excelUpload);
+  const error = sync?.error || sync?.photoError || sync?.excelError || sync?.folderError;
   $('sync-retry').hidden = !error;
   let status = 'Modo local';
   if (ctx.scope !== 'local') {
@@ -356,8 +385,7 @@ async function flush(ctx) {
   }
 }
 
-async function changeReceipt(fields) {
-  const ctx = workspace;
+async function changeReceipt(fields, ctx = workspace) {
   try {
     if (ctx.scope === 'local') {
       ctx.values = withReceiptChanges(ctx.values, fields);
@@ -376,8 +404,12 @@ async function changeReceipt(fields) {
       await storeRecords([patch]);
       flush(ctx);
     }
-  } catch { storeError(); }
+  } catch {
+    storeError();
+    return false;
+  }
   if (workspace === ctx) render();
+  return true;
 }
 
 const prefersSharing = () => localStorage.getItem(SHARE_KEYS) !== '0';
@@ -535,6 +567,69 @@ function excelFeedback(message, error = false) {
   feedback.classList.toggle('error', error);
 }
 
+function folderNames(ctx) {
+  const folders = new Map();
+  for (const [id, folder] of [...ctx.localFolders, ...Object.entries(ctx.folders)]) {
+    if (/^f[a-z0-9-]+$/i.test(id) && text(folder?.nombre)) folders.set(id, text(folder.nombre));
+  }
+  return new Map([['', 'Sin carpeta'], ...[...folders].sort(([, a], [, b]) => a.localeCompare(b, 'es-AR'))]);
+}
+
+function folderOptions(select, folders, value) {
+  const markup = [...folders].map(([id, name]) => `<option value="${id}">${html(name)}</option>`).join('');
+  if (select.dataset.markup !== markup) {
+    select.dataset.markup = markup;
+    select.innerHTML = markup;
+  }
+  select.value = folders.has(value) ? value : '';
+}
+
+async function flushFolders(ctx) {
+  const sync = ctx.sync;
+  if (!updatesAllowed(ctx) || !sync?.foldersRef || sync.writingFolders || sync.folderError) return;
+  const pending = [...ctx.localFolders.values()].filter(folder => folder.pending);
+  if (!pending.length) return;
+  sync.writingFolders = true;
+  try {
+    await sync.foldersRef.update(Object.fromEntries(pending.map(({ id, nombre }) => [id, { nombre }])));
+    await storeRecords([], pending.map(({ id }) => [ctx.scope, id]));
+    for (const { id, nombre } of pending) {
+      ctx.folders[id] = { nombre };
+      ctx.localFolders.delete(id);
+    }
+  } catch {
+    if (ctx.sync === sync) sync.folderError = true;
+  } finally {
+    sync.writingFolders = false;
+    if (ctx.sync === sync) {
+      render();
+      flushFolders(ctx);
+    }
+  }
+}
+
+async function createFolder() {
+  const ctx = workspace;
+  if (!ctx || busy) return;
+  const nombre = window.prompt('Nombre de la carpeta')?.trim();
+  if (!nombre) return;
+  if (nombre.length > 80) return jobMessage('Usá hasta 80 caracteres para el nombre de la carpeta.', true);
+  const current = [...folderNames(ctx)].find(([, name]) => name.toLocaleLowerCase('es-AR') === nombre.toLocaleLowerCase('es-AR'));
+  if (current) return jobMessage('Ya hay una carpeta con ese nombre.', true);
+  const folder = { id: `f${crypto.randomUUID()}`, scope: ctx.scope, type: 'folder', nombre, pending: ctx.scope !== 'local' };
+  try {
+    await storeRecords([folder]);
+    ctx.localFolders.set(folder.id, folder);
+    ctx.uploadFolder = folder.id;
+    if (workspace !== ctx) return;
+    render();
+    $('queue-wrap').open = true;
+    queueList(folder.id);
+    jobMessage(`Carpeta «${nombre}» lista para agregar fotos.`);
+    flushFolders(ctx);
+  } catch { storeError(); }
+}
+
 function updateControls() {
   const ctx = workspace;
   $('choose-excel').disabled = !ctx || loadingExcel || !!ctx.sync?.writingExcel;
@@ -543,8 +638,10 @@ function updateControls() {
   $('remove-excel').disabled = loadingExcel || !!ctx?.sync?.writingExcel;
   $('remove-excel').textContent = ctx?.scope === 'local' ? 'Quitar Excel local' : 'Quitar Excel de la sala';
   $('choose-images').disabled = !ctx || busy;
+  $('upload-folder').disabled = $('new-folder').disabled = !ctx || busy;
   $('process').disabled = !ctx || busy || !ctx.selectedPhotos.size;
-  for (const input of $('queue').querySelectorAll('[data-queue-select]')) input.disabled = busy;
+  for (const input of $('queue').querySelectorAll('[data-queue-select], [data-queue-remove], [data-queue-move]')) input.disabled = busy;
+  for (const button of $('receipts').querySelectorAll('[data-photo="move"], [data-photo="remove"]')) button.disabled = busy;
   $('include-all').disabled = !ctx || !ctx.excel;
   $('include-all').checked = !!ctx?.includeAll;
   const workbook = ctx?.workbook;
@@ -556,28 +653,50 @@ function updateControls() {
   renderKeys();
 }
 
-function queueList() {
+function queueList(openFolder) {
   const ctx = workspace;
-  const jobs = [...ctx.local.values()].sort((a, b) => b.id.localeCompare(a.id));
-  $('queue-wrap').hidden = !jobs.length;
-  const markup = jobs.map(job => {
+  const folders = folderNames(ctx);
+  const groups = new Map([...folders.keys()].map(id => [id, []]));
+  const jobs = [...ctx.local.values()].filter(job => !job.removedFromQueue && job.source).sort((a, b) => b.id.localeCompare(a.id));
+  for (const job of jobs) {
+    const id = ctx.remote.get(job.id)?.carpeta_id ?? job.carpeta_id;
+    groups.get(folders.has(id) ? id : '').push(job);
+  }
+  folderOptions($('upload-folder'), folders, ctx.uploadFolder);
+  $('queue-wrap').hidden = !jobs.length && folders.size === 1;
+  const bytes = jobs.reduce((total, job) => total + job.source.size + (job.preview?.size || 0), 0);
+  $('photo-storage').hidden = !jobs.length;
+  $('photo-storage').textContent = `${(bytes / 1e6).toLocaleString('es-AR', { maximumFractionDigits: 1 })} MB de fotos de esta sala en este navegador`;
+  const photoRow = job => {
     const name = html(job.name);
     const selectable = job.status !== 'done';
-    const canPreview = job.source && ctx.remote.get(job.id)?.photo !== false;
+    const canPreview = ctx.remote.get(job.id)?.photo !== false;
     const title = selectable ? `<label class="check queue-name"><input type="checkbox" data-queue-select="${job.id}" aria-label="Seleccionar ${name} para transcribir"> <strong>${name}</strong></label>`
       : `<span class="queue-name"><strong>${name}</strong> · Transcripta</span>`;
-    return `<li><div class="queue-item">${title}${canPreview ? `<button type="button" class="small" data-queue-preview="${job.id}" aria-label="Ver foto ${name}">Ver foto</button>` : ''}</div>
+    return `<li><div class="queue-item">${title}<div class="actions">
+      ${canPreview ? `<button type="button" class="small" data-queue-preview="${job.id}" aria-label="Ver foto ${name}">Ver foto</button>` : ''}
+      ${folders.size > 1 ? `<button type="button" class="small" data-queue-move="${job.id}" aria-label="Mover ${name}">Mover</button>` : ''}
+      <button type="button" class="small remove-photo" data-queue-remove="${job.id}" aria-label="Eliminar foto ${name}">×</button></div></div>
       ${job.error ? `<p class="hint error">${html(job.error)}</p>` : ''}</li>`;
-  }).join('');
+  };
+  const markup = [...groups].filter(([id, group]) => id || group.length).map(([id, group]) =>
+    `<details class="folder" data-queue-folder="${id}"><summary>${html(folders.get(id))} · ${group.length} ${group.length === 1 ? 'foto' : 'fotos'}</summary>
+    ${group.length ? `<ul class="queue">${group.map(photoRow).join('')}</ul>` : ''}</details>`).join('');
   const queue = $('queue');
   if (queue.dataset.markup !== markup) {
+    const wasOpen = new Map([...queue.children].map(group => [group.dataset.queueFolder, group.open]));
     queue.dataset.markup = markup;
     queue.innerHTML = markup;
+    for (const group of queue.children) {
+      const id = group.dataset.queueFolder;
+      group.open = wasOpen.get(id) ?? (id === ctx.uploadFolder || id === '');
+    }
   }
+  for (const group of queue.children) if (group.dataset.queueFolder === openFolder) group.open = true;
   for (const input of queue.querySelectorAll('[data-queue-select]')) {
     input.checked = ctx.selectedPhotos.has(input.dataset.queueSelect);
-    input.disabled = busy;
   }
+  for (const input of queue.querySelectorAll('[data-queue-select], [data-queue-remove], [data-queue-move]')) input.disabled = busy;
 }
 
 function selectQueuedPhoto(event) {
@@ -601,22 +720,62 @@ async function previewQueuedPhoto(event) {
   if (!job?.source) return;
   const dialog = $('photo-preview');
   const image = $('preview-image');
+  const figure = $('preview-figure');
   const status = $('preview-status');
   const ticket = ++previewTicket;
   $('preview-title').textContent = job.name;
-  image.hidden = true;
+  figure.hidden = $('preview-controls').hidden = true;
+  $('preview-zoom').value = 100;
+  zoomPhoto(figure, 100);
   status.textContent = 'Cargando foto…';
   dialog.showModal();
   try {
     const source = await jpegSource(job);
     if (ticket !== previewTicket || !dialog.open) return;
     previewUrl = URL.createObjectURL(source);
-    image.onload = () => { image.hidden = false; status.textContent = ''; };
+    image.onload = () => {
+      figure.hidden = $('preview-controls').hidden = false;
+      updatePanCursor(figure);
+      status.textContent = '';
+    };
     image.onerror = () => { status.textContent = 'No se pudo abrir la foto.'; };
     image.src = previewUrl;
   } catch (error) {
     if (ticket === previewTicket && dialog.open) status.textContent = error.message;
   }
+}
+
+function updatePanCursor(figure) {
+  figure.classList.toggle('pannable', figure.scrollHeight > figure.clientHeight || figure.scrollWidth > figure.clientWidth);
+}
+
+function zoomPhoto(figure, value) {
+  figure.classList.toggle('zoomed', Number(value) > 100);
+  figure.querySelector('img').style.width = `${value}%`;
+  updatePanCursor(figure);
+}
+
+function enablePhotoPan(figure) {
+  let drag;
+  figure.addEventListener('pointerdown', event => {
+    if (event.pointerType !== 'mouse' || event.button !== 0 || event.target.tagName !== 'IMG') return;
+    updatePanCursor(figure);
+    if (!figure.classList.contains('pannable')) return;
+    drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: figure.scrollLeft, top: figure.scrollTop };
+    figure.setPointerCapture(event.pointerId);
+    figure.classList.add('is-dragging');
+    event.preventDefault();
+  });
+  figure.addEventListener('pointermove', event => {
+    if (drag?.id !== event.pointerId) return;
+    figure.scrollLeft = drag.left + drag.x - event.clientX;
+    figure.scrollTop = drag.top + drag.y - event.clientY;
+  });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) figure.addEventListener(type, () => {
+    drag = null;
+    figure.classList.remove('is-dragging');
+  });
+  figure.querySelector('img').addEventListener('load', () => updatePanCursor(figure));
 }
 
 function heicFile(source) {
@@ -675,14 +834,15 @@ function encodePhoto(photo) {
 function flushPhotos(ctx) {
   const sync = ctx.sync;
   if (!updatesAllowed(ctx) || !sync?.ready || sync.photoWork.size || sync.photoError) return;
-  const job = [...ctx.local.values()].find(job => job.source && ctx.values[job.id]?.version === 1
+  const job = [...ctx.local.values()].find(job => job.source && !ctx.deletingPhotos.has(job.id) && ctx.values[job.id]?.version === 1
     && ctx.values[job.id].photo === undefined && !sync.photoDone.has(job.id));
   if (!job) return;
   sync.photoWork.add(job.id);
   (async () => {
     try {
-      const jpeg = await encodePhoto(await resizePhoto(await jpegSource(job), 1000, .6));
-      if (ctx.sync !== sync || !updatesAllowed(ctx) || ctx.values[job.id]?.photo !== undefined) return;
+      const jpeg = await encodePhoto(await resizePhoto(await jpegSource(job), SHARED_PHOTO_EDGE, SHARED_PHOTO_QUALITY));
+      if (ctx.sync !== sync || !updatesAllowed(ctx) || !job.source || ctx.deletingPhotos.has(job.id)
+        || ctx.values[job.id]?.photo !== undefined) return;
       await sync.room.update({ [`imagenes/${job.id}`]: jpeg, [`remitos/${job.id}/photo`]: true });
       sync.photoDone.add(job.id);
     } catch {
@@ -690,7 +850,7 @@ function flushPhotos(ctx) {
     } finally {
       sync.photoWork.delete(job.id);
       updateSync();
-      if (sync.photoDone.has(job.id)) flushPhotos(ctx);
+      if (ctx.sync === sync) flushPhotos(ctx);
     }
   })();
 }
@@ -701,39 +861,163 @@ function forgetPhoto(id) {
   photoUrls.delete(id);
 }
 
+function askRemovePhoto(id) {
+  const ctx = workspace;
+  const job = ctx?.local.get(id);
+  const receipt = ctx?.remote.get(id);
+  if ((!job?.source && receipt?.photo !== true) || busy) return;
+  removal = { ctx, id };
+  $('remove-photo-name').textContent = job?.name || receipt?.nombre_archivo || 'Foto del remito';
+  $('remove-photo-info').textContent = receipt
+    ? (ctx.scope === 'local' ? 'Se conserva la transcripción.' : 'Se quitará también la copia compartida. Se conserva la transcripción.')
+    : 'Se quitará de las fotos cargadas en este navegador.';
+  $('remove-photo-error').hidden = true;
+  $('remove-photo-dialog').showModal();
+}
+
+async function confirmRemovePhoto() {
+  const { ctx, id } = removal || {};
+  if (!ctx || workspace !== ctx || busy || ctx.deletingPhotos.has(id)) return;
+  const button = $('confirm-remove-photo');
+  const cancel = $('cancel-remove-photo');
+  const errorBox = $('remove-photo-error');
+  ctx.deletingPhotos.add(id);
+  button.disabled = cancel.disabled = true;
+  errorBox.hidden = true;
+  try {
+    const remove = async () => {
+      const job = await readRecords(ctx.scope, id);
+      let saved = ctx.values[id];
+      // Otra pestaña pudo publicar el remito después de que se abrió esta lista.
+      if (!saved && job?.receipt && updatesAllowed(ctx)) {
+        saved = (await ctx.sync.ref.child(id).once('value')).val();
+      }
+      if (job?.receipt && !job.pending && !saved && ctx.scope !== 'local' && !updatesAllowed(ctx)) {
+        throw new Error('Conectate a la sala para eliminar la foto compartida.');
+      }
+      if (ctx.scope !== 'local' && saved?.version === 1 && saved.photo !== false) {
+        if (!updatesAllowed(ctx)) throw new Error('Conectate a la sala para eliminar la foto compartida.');
+        await ctx.sync.room.update({ [`imagenes/${id}`]: null, [`remitos/${id}/photo`]: false });
+        if (ctx.values[id]?.version === 1) ctx.values = withReceiptChanges(ctx.values, { [`${id}/photo`]: false });
+      }
+      if (job?.receipt) {
+        // El trabajo también puede ser la única copia local de la transcripción.
+        const stripped = { ...job, source: null, preview: null, removedFromQueue: true,
+          payload: { ...(job.payload || publicReceipt(job.receipt)), photo: false } };
+        await storeRecords([stripped]);
+        const local = ctx.local.get(id);
+        if (local) Object.assign(local, stripped);
+        else ctx.local.set(id, stripped);
+      } else {
+        await storeRecords([], [[ctx.scope, id]]);
+        ctx.local.delete(id);
+      }
+      ctx.selectedPhotos.delete(id);
+    };
+    if (navigator.locks) await navigator.locks.request(`control-remitos:${ctx.scope}`, { ifAvailable: true }, lock => {
+      if (!lock) throw new Error('Hay una tanda en curso en otra pestaña. Volvé a intentar cuando termine.');
+      return remove();
+    });
+    else await remove();
+    if (workspace === ctx) {
+      forgetPhoto(id);
+      $('remove-photo-dialog').close();
+      jobMessage('Foto eliminada.');
+    }
+  } catch (error) {
+    if (workspace === ctx) {
+      errorBox.textContent = error.message || 'No se pudo eliminar la foto.';
+      errorBox.hidden = false;
+    }
+  } finally {
+    button.disabled = cancel.disabled = false;
+    ctx.deletingPhotos.delete(id);
+    if (workspace === ctx) {
+      recalculate(ctx);
+      render();
+      flush(ctx);
+      flushPhotos(ctx);
+    }
+  }
+}
+
+function askMovePhoto(id) {
+  const ctx = workspace;
+  const job = ctx?.local.get(id);
+  const receipt = ctx?.remote.get(id);
+  if ((!job && !receipt) || busy) return;
+  move = { ctx, id };
+  folderOptions($('move-folder'), folderNames(ctx), receipt?.carpeta_id ?? job?.carpeta_id);
+  $('move-photo-error').hidden = true;
+  $('move-photo-dialog').showModal();
+}
+
+async function movePhoto(event) {
+  event.preventDefault();
+  const { ctx, id } = move || {};
+  if (!ctx || workspace !== ctx || busy) return;
+  const folder = $('move-folder').value;
+  const job = ctx.local.get(id);
+  const button = $('confirm-move-photo');
+  button.disabled = true;
+  try {
+    const save = async () => {
+      const fresh = job && await readRecords(ctx.scope, id);
+      if (fresh?.receipt && !ctx.remote.has(id)) {
+        ctx.local.set(id, fresh);
+        recalculate(ctx);
+      }
+      if (ctx.remote.has(id)) {
+        if (!await changeReceipt({ [`${id}/carpeta_id`]: folder || null }, ctx)) throw new Error();
+      } else if (fresh) {
+        const updated = { ...fresh, carpeta_id: folder };
+        await storeRecords([updated]);
+        ctx.local.set(id, updated);
+      } else throw new Error('La foto ya fue eliminada en otra pestaña.');
+    };
+    if (navigator.locks) await navigator.locks.request(`control-remitos:${ctx.scope}`, { ifAvailable: true }, lock => {
+      if (!lock) throw new Error('Hay una tanda en curso en otra pestaña. Volvé a intentar cuando termine.');
+      return save();
+    });
+    else await save();
+    if (workspace === ctx) {
+      $('move-photo-dialog').close();
+      queueList(folder);
+      jobMessage('Foto movida.');
+    }
+  } catch (error) {
+    $('move-photo-error').textContent = error.message || 'No se pudo mover la foto.';
+    $('move-photo-error').hidden = false;
+  } finally { button.disabled = false; }
+}
+
 async function photoAction(event) {
   const button = event.target.closest('button[data-photo]');
   const id = button?.closest('article')?.dataset.id;
   const ctx = workspace;
   const receipt = ctx?.remote.get(id);
   if (!receipt) return;
+  if (button.dataset.photo === 'remove') return askRemovePhoto(id);
+  if (button.dataset.photo === 'move') return askMovePhoto(id);
   const job = ctx.local.get(id);
-  const shared = ctx.scope !== 'local';
-  if (button.dataset.photo === 'remove' && !window.confirm('¿Quitar solo la foto de este remito? Su transcripción se conserva.')) return;
   const feedback = button.closest('.photo-block').querySelector('[data-photo-feedback]');
+  const details = button.closest('.receipt-toggle');
   button.disabled = true;
   feedback.textContent = '';
   try {
-    if (button.dataset.photo === 'remove') {
-      if (shared) {
-        if (!updatesAllowed(ctx)) throw new Error('Conectate a la sala para quitar la foto.');
-        await ctx.sync.room.update({ [`imagenes/${id}`]: null, [`remitos/${id}/photo`]: false });
-      }
-      if (job) {
-        delete job.source;
-        delete job.preview;
-        await storeRecords([job]);
-      }
-      forgetPhoto(id);
-    } else if (!photoUrls.has(id)) {
-      if (shared) {
+    if (!photoUrls.has(id)) {
+      if (job?.source) {
+        const source = await jpegSource(job);
+        if (workspace !== ctx || !details.open || ctx.remote.get(id)?.photo === false || !job.source || ctx.deletingPhotos.has(id)) return;
+        photoUrls.set(id, URL.createObjectURL(source));
+      } else {
         if (!ctx.sync?.online) throw new Error('Conectate a la sala para ver la foto.');
         const snapshot = await ctx.sync.room.child('imagenes').child(id).once('value');
         const jpeg = snapshot.val();
         if (typeof jpeg !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(jpeg)) throw new Error('La foto no está disponible.');
-        if (workspace !== ctx || ctx.remote.get(id)?.photo !== true) return;
+        if (workspace !== ctx || !details.open || ctx.remote.get(id)?.photo !== true || ctx.deletingPhotos.has(id)) return;
         photoUrls.set(id, `data:image/jpeg;base64,${jpeg}`);
-      } else if (job?.source) photoUrls.set(id, URL.createObjectURL(job.preview || job.source));
+      }
     }
     if (workspace === ctx) render();
   } catch (error) {
@@ -748,13 +1032,14 @@ async function addPhotos(files) {
   if (files.some(file => !/\.(jpe?g|png|hei[cf])$/i.test(file.name) && !/^image\/(jpeg|png|hei[cf])$/.test(file.type))) {
     return jobMessage('Elegí solo imágenes JPG, PNG o HEIC.', true);
   }
-  const jobs = files.map(source => ({ id: newId(), scope: ctx.scope, type: 'photo', name: source.name, source, status: 'queued' }));
+  const folder = ctx.uploadFolder;
+  const jobs = files.map(source => ({ id: newId(), scope: ctx.scope, type: 'photo', name: source.name, source, status: 'queued', carpeta_id: folder }));
   try {
     await storeRecords(jobs);
     for (const job of jobs) ctx.local.set(job.id, job);
     if (workspace !== ctx) return;
     jobMessage('Marcá las fotos que querés transcribir.');
-    queueList();
+    queueList(folder);
     $('queue-wrap').open = true;
     updateControls();
   } catch { jobMessage('No hay espacio o acceso para guardar las fotos en este navegador.', true); }
@@ -814,9 +1099,9 @@ async function processPhotos() {
     // Otra pestaña del mismo navegador podría haber terminado una foto mientras se esperaba el turno.
     const stored = await readRecords(ctx.scope);
     if (workspace !== ctx) return;
-    for (const job of stored) {
-      if (job.type === 'photo' && (!ctx.local.has(job.id) || !ctx.local.get(job.id).receipt)) ctx.local.set(job.id, job);
-    }
+    const savedPhotos = new Map(stored.filter(record => record.type === 'photo').map(job => [job.id, job]));
+    for (const [id, job] of ctx.local) if (!job.receipt && !savedPhotos.has(id)) ctx.local.delete(id);
+    for (const [id, job] of savedPhotos) if (!ctx.local.get(id)?.receipt) ctx.local.set(id, job);
     recalculate(ctx);
     render();
     const selected = [];
@@ -844,7 +1129,7 @@ async function processPhotos() {
           pending = outcome.pending;
           break;
         }
-        job.receipt = { id: job.id, ...outcome.receipt, nombre_archivo: job.name,
+        job.receipt = { id: job.id, ...outcome.receipt, nombre_archivo: job.name, carpeta_id: job.carpeta_id,
           lines: outcome.receipt.lines.map((line, order) => ({ ...line, key: newLineKey(), order })) };
         job.payload = publicReceipt(job.receipt);
         job.pending = ctx.scope !== 'local';
@@ -948,27 +1233,35 @@ function makeCard(receipt) {
     editField(field, label, receipt[field], true, field === 'observacion')).join('')}</div>
     <div class="receipt-layout"><div class="photo-block">
       <div class="actions"><button type="button" class="small" data-photo="open" hidden>Ver foto</button>
-      <button type="button" class="small" data-photo="remove" hidden>Quitar foto</button></div>
+      <button type="button" class="small" data-photo="move" hidden>Mover de carpeta</button>
+      <button type="button" class="small remove-photo" data-photo="remove" aria-label="Eliminar foto" hidden>×</button></div>
       <p class="hint" data-photo-status></p><p class="hint" data-photo-feedback role="status"></p>
-      <figure tabindex="0" aria-label="Foto del remito" hidden><img alt="Foto del remito"></figure>
+      <figure class="pan-photo" tabindex="0" aria-label="Foto del remito" hidden><img alt="Foto del remito" draggable="false"></figure>
       <label class="check" data-photo-zoom hidden>Zoom <input type="range" min="100" max="400" step="25" value="100" aria-label="Zoom de la foto"></label>
     </div><div class="review">
       ${receipt.lines.length ? `<div class="table-wrap"><table aria-label="Líneas del remito"><thead><tr><th>Fecha</th><th>Descripción</th><th>Cant.</th><th>Comparación</th></tr></thead>
       <tbody>${receipt.lines.map(line => lineMarkup(line, true)).join('')}</tbody></table></div>`
     : '<p class="empty">El remito no tiene líneas transcritas.</p>'}
       <div class="receipt-foot"><button type="button" class="small" data-action="add">Agregar línea</button></div></div></div></details>`;
+  enablePhotoPan(card.querySelector('figure'));
+  const details = card.querySelector('.receipt-toggle');
+  details.addEventListener('toggle', () => {
+    if (details.open || !card.isConnected || !photoUrls.has(receipt.id)) return;
+    forgetPhoto(receipt.id);
+    renderPhoto(card, workspace.remote.get(receipt.id), workspace.local.get(receipt.id));
+  });
   return card;
 }
 
 function renderPhoto(card, receipt, job) {
   const cloud = workspace.scope !== 'local';
-  const available = cloud ? receipt.photo === true : !!job?.source;
+  const available = receipt.photo === true || (receipt.photo !== false && !!job?.source);
   if (!available) forgetPhoto(receipt.id);
   const url = photoUrls.get(receipt.id);
   card.querySelector('[data-photo="open"]').hidden = !available || !!url;
   card.querySelector('[data-photo="remove"]').hidden = !available;
-  card.querySelector('[data-photo-status]').textContent = available ? ''
-    : cloud && receipt.photo === undefined && job?.source ? 'Compartiendo foto…' : 'Foto no disponible';
+  card.querySelector('[data-photo-status]').textContent = cloud && receipt.photo === undefined && job?.source
+    ? 'Compartiendo foto…' : available ? '' : 'Foto no disponible';
   card.querySelector('figure').hidden = card.querySelector('[data-photo-zoom]').hidden = !url;
   const image = card.querySelector('figure img');
   if (url && image.getAttribute('src') !== url) image.src = url;
@@ -1040,7 +1333,21 @@ function render() {
   const filter = $('verified-filter').value;
   let visible = 0;
   const container = $('receipts');
-  receipts.forEach((receipt, position) => {
+  const folders = folderNames(ctx);
+  const folderPositions = new Map();
+  const visibleInFolder = new Map();
+  for (const [id] of folders) {
+    if (!reviewFolders.has(id)) {
+      const group = document.createElement('details');
+      group.className = 'folder';
+      group.dataset.reviewFolder = id;
+      group.open = true;
+      group.innerHTML = '<summary></summary><div class="folder-cards"></div><p class="hint folder-cards">Sin remitos transcritos</p>';
+      reviewFolders.set(id, group);
+    }
+    folderPositions.set(id, 0);
+  }
+  receipts.forEach(receipt => {
     const job = ctx.local.get(receipt.id);
     let entry = cards.get(receipt.id);
     const lineKeys = receipt.lines.map(line => line.key).join(' ');
@@ -1053,12 +1360,17 @@ function render() {
       cards.set(receipt.id, entry);
     }
     const { card } = entry;
-    if (container.children[position] !== card) container.insertBefore(card, container.children[position] || null);
+    const folder = folders.has(receipt.carpeta_id) ? receipt.carpeta_id : '';
+    const group = reviewFolders.get(folder).querySelector('div');
+    const position = folderPositions.get(folder);
+    if (group.children[position] !== card) group.insertBefore(card, group.children[position] || null);
+    folderPositions.set(folder, position + 1);
     const title = receipt.numero_remito ? `Remito ${receipt.numero_remito}` : 'Remito sin número';
     const fileName = receipt.nombre_archivo || job?.name;
     card.querySelector('[data-receipt-title]').textContent = fileName ? `${title} · ${fileName}` : title;
     renderFields(card.querySelector('.receipt-head'), receipt);
     renderPhoto(card, receipt, job);
+    card.querySelector('[data-photo="move"]').hidden = folders.size === 1;
     const dates = datesFor(receipt);
     const rows = new Map([...card.querySelectorAll('tr[data-line]')].map(row => [row.dataset.line, row]));
     const matches = { ok: 0, doubtful: 0, missing: 0, pending: 0 };
@@ -1092,10 +1404,28 @@ function render() {
     if (compared && finished === compared) totals.reviewed++;
     card.hidden = ($('person').value && $('person').value !== receipt.persona) || ($('work').value && $('work').value !== receipt.obra_o_vehiculo)
       || (($('only-issues').checked || filter !== 'all') && !rowVisible);
-    if (!card.hidden) visible++;
+    if (!card.hidden) {
+      visible++;
+      visibleInFolder.set(folder, (visibleInFolder.get(folder) || 0) + 1);
+    }
   });
+  let folderPosition = 0;
+  for (const [id, name] of folders) {
+    const group = reviewFolders.get(id);
+    const count = folderPositions.get(id);
+    const shown = visibleInFolder.get(id) || 0;
+    group.hidden = id ? count > 0 && shown === 0 : shown === 0;
+    group.querySelector('summary').textContent = `${name} · ${shown} ${shown === 1 ? 'remito' : 'remitos'}`;
+    group.querySelector(':scope > p').hidden = count > 0;
+    if (container.children[folderPosition] !== group) container.insertBefore(group, container.children[folderPosition] || null);
+    folderPosition++;
+  }
+  for (const [id, group] of reviewFolders) if (!folders.has(id)) {
+    group.remove();
+    reviewFolders.delete(id);
+  }
   for (const [key, count] of Object.entries(totals)) $(`count-${key}`).textContent = count;
-  $('empty').hidden = visible > 0;
+  $('empty').hidden = visible > 0 || (!receipts.length && folders.size > 1);
   $('empty').textContent = receipts.length ? 'No hay remitos con esos filtros.' : 'Agregá fotos para empezar o abrí el control desde una sala del planificador para ver sus resultados.';
   $('export-xlsx').disabled = $('export-csv').disabled = !receipts.some(receipt => receipt.lines.length);
   updateControls();
@@ -1454,9 +1784,18 @@ $('remove-excel').onclick = removeWorkbook;
 $('excel-file').onchange = event => { loadWorkbook(event.target.files[0]); event.target.value = ''; };
 $('choose-images').onclick = () => $('images').click();
 $('images').onchange = event => { addPhotos([...event.target.files]); event.target.value = ''; };
+$('upload-folder').onchange = event => { if (workspace) workspace.uploadFolder = event.target.value; };
+$('new-folder').onclick = createFolder;
 $('process').onclick = processPhotos;
 $('queue').addEventListener('change', selectQueuedPhoto);
-$('queue').addEventListener('click', previewQueuedPhoto);
+$('queue').addEventListener('click', event => {
+  const button = event.target.closest('button');
+  if (button?.dataset.queueRemove) askRemovePhoto(button.dataset.queueRemove);
+  else if (button?.dataset.queueMove) askMovePhoto(button.dataset.queueMove);
+  else if (button?.dataset.queuePreview) previewQueuedPhoto(event);
+});
+enablePhotoPan($('preview-figure'));
+$('preview-zoom').oninput = event => zoomPhoto($('preview-figure'), event.target.value);
 $('photo-preview').addEventListener('close', () => {
   previewTicket++;
   const image = $('preview-image');
@@ -1465,6 +1804,13 @@ $('photo-preview').addEventListener('close', () => {
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = null;
 });
+$('confirm-remove-photo').onclick = confirmRemovePhoto;
+$('remove-photo-dialog').addEventListener('cancel', event => {
+  if ($('confirm-remove-photo').disabled) event.preventDefault();
+});
+$('move-photo-form').onsubmit = event => {
+  if (event.submitter?.formMethod !== 'dialog') movePhoto(event);
+};
 $('sync-retry').onclick = () => { if (workspace) connect(workspace, parentConnection()); };
 $('include-all').onchange = event => {
   const ctx = workspace;
@@ -1481,7 +1827,7 @@ $('receipts').addEventListener('click', doLineAction);
 $('receipts').addEventListener('click', photoAction);
 $('receipts').addEventListener('focusout', event => { if (event.target.matches('[data-field]')) setTimeout(render, 0); });
 $('receipts').addEventListener('input', event => {
-  if (event.target.type === 'range') event.target.closest('.photo-block').querySelector('img').style.width = `${event.target.value}%`;
+  if (event.target.type === 'range') zoomPhoto(event.target.closest('.photo-block').querySelector('figure'), event.target.value);
 });
 $('chooser').addEventListener('click', chooseRow);
 $('chooser').addEventListener('close', () => { chooser = null; });

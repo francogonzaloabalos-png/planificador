@@ -38,7 +38,19 @@
     .queue li{padding:5px 0;overflow-wrap:anywhere;border-top:1px solid var(--line)}
     .queue-item{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap}
     .queue-name{flex:1 1 170px;min-width:0;overflow-wrap:anywhere}
-    #preview-image{display:block;object-fit:contain;max-width:100%;max-height:72dvh;margin:auto}
+    .folders{display:grid;gap:6px;margin-top:8px}
+    .folder{border:1px solid var(--line);border-radius:8px;min-width:0}
+    .folder>summary{padding:7px 10px;overflow-wrap:anywhere}
+    .folder>ul,.folder-cards{margin:0 8px 8px}
+    .folder-cards{display:grid;gap:8px}
+    .remove-photo{color:var(--missing);font-size:1.05rem!important}
+    #photo-preview{max-width:min(1000px,calc(100% - 20px))}
+    #preview-figure{max-height:70dvh;overflow:auto;margin:0;background:#ebf0eb;border-radius:8px}
+    #preview-image{display:block;width:100%;height:auto;max-height:70dvh;object-fit:contain}
+    #preview-figure.zoomed img{max-height:none}
+    .pan-photo.pannable{cursor:grab}
+    .pan-photo.is-dragging{cursor:grabbing;user-select:none}
+    .photo-dialog{max-width:min(420px,calc(100% - 20px))}
     .key-list{list-style:none;margin:0;padding:0;display:grid;gap:5px}
     .key-list li{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:5px}
     #receipts{display:grid;gap:12px} #notice{margin-bottom:10px}
@@ -72,7 +84,7 @@
       td::before{content:attr(data-label);display:block;color:var(--soft);font-weight:650;font-size:.8rem;margin-bottom:2px}
     }
   </style>
-  <script type="module" src="control-remitos.js?v=revision-remitos"></script>
+  <script type="module" src="control-remitos.js?v=carpetas-fotos"></script>
 </head>
 <body>
   <main>
@@ -110,6 +122,10 @@
       <section class="panel stack" aria-labelledby="fotos">
         <h2 id="fotos">Fotos</h2>
         <div class="actions">
+          <label class="field">Carpeta para agregar fotos <select id="upload-folder"><option value="">Sin carpeta</option></select></label>
+          <button type="button" id="new-folder" class="small">Nueva carpeta</button>
+        </div>
+        <div class="actions">
           <button id="choose-images">Agregar fotos</button>
           <button id="process" class="primary" disabled>Transcribir seleccionadas</button>
         </div>
@@ -117,7 +133,8 @@
         <p class="hint">JPG, PNG o HEIC. Hasta 10 por tanda. Al transcribir se envían a Gemini y se comparte una copia reducida en la sala.</p>
         <div id="progress-wrap" hidden><progress id="progress" value="0" max="1" aria-label="Avance de la tanda"></progress></div>
         <p id="task-status" class="hint" role="status"></p>
-        <details id="queue-wrap" hidden><summary>Fotos cargadas</summary><ul id="queue" class="queue"></ul></details>
+        <details id="queue-wrap" hidden><summary>Fotos cargadas</summary><div id="queue" class="folders"></div></details>
+        <p id="photo-storage" class="hint" hidden></p>
       </section>
     </div>
 
@@ -148,7 +165,30 @@
   <dialog id="photo-preview" aria-labelledby="preview-title">
     <div class="top"><h2 id="preview-title">Vista previa</h2><form method="dialog"><button class="small">Cerrar</button></form></div>
     <p id="preview-status" class="hint" role="status"></p>
-    <img id="preview-image" alt="Vista previa del remito" hidden>
+    <label class="check" id="preview-controls" hidden>Zoom <input id="preview-zoom" type="range" min="100" max="400" step="25" value="100" aria-label="Zoom de la vista previa"></label>
+    <figure id="preview-figure" class="pan-photo" tabindex="0" aria-label="Vista previa ampliable" hidden><img id="preview-image" alt="Vista previa del remito" draggable="false"></figure>
+  </dialog>
+
+  <dialog id="remove-photo-dialog" class="photo-dialog" aria-labelledby="remove-photo-title">
+    <div class="stack">
+      <h2 id="remove-photo-title">¿Seguro que querés eliminar la foto?</h2>
+      <p id="remove-photo-name"></p>
+      <p class="hint" id="remove-photo-info"></p>
+      <p class="hint error" id="remove-photo-error" role="status" hidden></p>
+      <form class="actions" method="dialog">
+        <button type="submit" id="cancel-remove-photo" autofocus>Cancelar</button>
+        <button type="button" id="confirm-remove-photo" class="primary">Eliminar foto</button>
+      </form>
+    </div>
+  </dialog>
+
+  <dialog id="move-photo-dialog" class="photo-dialog" aria-labelledby="move-photo-title">
+    <form id="move-photo-form" class="stack">
+      <h2 id="move-photo-title">Mover a otra carpeta</h2>
+      <label class="field">Carpeta <select id="move-folder"></select></label>
+      <p class="hint error" id="move-photo-error" role="status" hidden></p>
+      <div class="actions"><button type="submit" formmethod="dialog">Cancelar</button><button type="submit" id="confirm-move-photo" class="primary">Mover foto</button></div>
+    </form>
   </dialog>
 
   <dialog id="chooser" aria-labelledby="chooser-title">

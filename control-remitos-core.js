@@ -465,6 +465,7 @@ export function publicReceipt(receipt) {
   const header = Object.fromEntries(Object.keys(headerFields).map(key => [key, text(receipt[key])]));
   const lines = Object.fromEntries(receipt.lines.map((line, index) => [line.key || `l${index}`, publicLine(line, line.order ?? index)]));
   return { version: 1, ...header, ...(receipt.nombre_archivo && { nombre_archivo: text(receipt.nombre_archivo) }),
+    ...(receipt.carpeta_id && { carpeta_id: receipt.carpeta_id }),
     ...(typeof receipt.photo === 'boolean' && { photo: receipt.photo }),
     ...(receipt.lines.length && { lines }) };
 }
@@ -482,7 +483,8 @@ export function receiveReceipt(id, value) {
         comparar: line.comparar === true,
         verificado: mark && text(mark.por) && Number.isFinite(mark.fecha) ? { por: text(mark.por), fecha: mark.fecha } : null };
     }).sort((a, b) => a.order - b.order || a.key.localeCompare(b.key));
-  return { id, ...header, nombre_archivo: text(value.nombre_archivo), photo: value.photo, lines: expandRepeatedMaterials(lines) };
+  return { id, ...header, nombre_archivo: text(value.nombre_archivo), carpeta_id: text(value.carpeta_id),
+    photo: value.photo, lines: expandRepeatedMaterials(lines) };
 }
 
 // Cada bloque queda muy por debajo del límite de escritura del SDK.
