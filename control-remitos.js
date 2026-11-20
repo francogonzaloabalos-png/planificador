@@ -378,7 +378,8 @@ async function changeReceipt(fields) {
 
 const prefersSharing = () => localStorage.getItem(SHARE_KEYS) !== '0';
 const usesRoomKeys = ctx => !!ctx && ctx.scope !== 'local' && prefersSharing();
-const validKey = value => typeof value === 'string' && /^[A-Za-z0-9_-]{8,}$/.test(value);
+// Las claves se envían como tokens opacos. Las de autorización también pueden incluir puntos.
+const validKey = value => typeof value === 'string' && /^[A-Za-z0-9._~+/-]{8,}={0,2}$/.test(value);
 const labels = { available: 'Disponible', paused: 'En pausa', daily: 'Agotada por hoy' };
 
 // Un nodo con versión representa una lista vacía, que Firebase no guarda como array.
@@ -1322,10 +1323,11 @@ async function download(format) {
 $('settings-form').addEventListener('submit', async event => {
   event.preventDefault();
   const value = text($('gemini-key').value);
-  if (!validKey(value)) return keyFeedback('Pegá una clave de Gemini válida.', true);
+  if (!validKey(value)) return keyFeedback('Copiá el valor completo de la clave desde Google AI Studio y pegalo sin espacios.', true);
   if (activeKeys(workspace).some(entry => entry.value === value)) return keyFeedback('Esa clave ya está en la lista.', true);
   if (await editKeys(entries => entries.some(entry => entry.value === value) ? entries : [...entries, { value }])) {
     $('gemini-key').value = '';
+    keyFeedback('Clave agregada. Podés transcribir las fotos.');
   }
 });
 $('gemini-keys').addEventListener('click', event => {
