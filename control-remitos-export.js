@@ -1,5 +1,5 @@
 import { excelColumns, excelDay, excelEditLabel, excelEditLabels, excelEditValue, excelRowEdits,
-  isReturnMovement, normalize, productCategories, productLabel, suggestProductCategory } from './control-remitos-core.js?v=ajustes-excel';
+  isReturnMovement, normalize, productCategories, productLabel, suggestProductCategory } from './control-remitos-core.js?v=fix-records-20261120';
 
 const workbookNamespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const featureNamespace = 'http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag';
