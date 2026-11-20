@@ -192,6 +192,7 @@ function observationText(cell, date1904) {
 }
 
 function savedObservations(base) {
+  if (!Array.isArray(base?.records)) return new Map();
   const headers = base?.records.find(row => row.fila === 2)?.cells || {};
   const key = Object.keys(headers).find(column => observationHeaders.includes(normalize(headers[column].v)));
   if (!key) return new Map();
