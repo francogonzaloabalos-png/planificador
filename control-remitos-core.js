@@ -113,6 +113,9 @@ export function readWorkbook(xlsx, bytes, { includeSource = false } = {}) {
   const workbook = xlsx.read(bytes, { type: 'array', sheets: 'BASE DE DATOS', cellNF: true, cellStyles: includeSource, cellDates: false });
   const sheet = workbook.Sheets['BASE DE DATOS'];
   if (!sheet?.['!ref']) throw new Error('El archivo debe tener una hoja «BASE DE DATOS».');
+  if (normalize(sheet.B1?.v) === 'BASE DE DATOS VOLVE A CARGAR EL EXCEL PARA COPIAR TODAS SUS COLUMNAS') {
+    throw new Error('Ese archivo es una exportación incompleta. Elegí el .xlsx original para recuperar todas las columnas.');
+  }
   const date1904 = !!workbook.Workbook?.WBProps?.date1904;
   const rows = readBaseRows(xlsx, sheet, date1904);
   return includeSource ? { rows, base: readBaseCopy(xlsx, sheet, date1904) } : rows;

@@ -2,8 +2,8 @@ import {
   headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
   compareRowFields, reviewReturn, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
   receiveReceipt, exportRows, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, productCategories
-} from './control-remitos-core.js?v=devoluciones';
-import { buildRemitosExcel } from './control-remitos-export.js?v=devoluciones';
+} from './control-remitos-core.js?v=base-completa';
+import { buildRemitosExcel } from './control-remitos-export.js?v=base-completa';
 
 const $ = id => document.getElementById(id);
 const LEGACY_KEY = 'control_remitos_gemini_key_v1';
@@ -895,7 +895,9 @@ function updateControls() {
   const status = ctx?.excelUpload ? ' · pendiente de publicar' : '';
   $('excel-info').textContent = loadingExcel || ctx?.sync?.readingExcel ? 'Cargando Excel…'
     : workbook ? `${count.toLocaleString('es-AR')} ${count === 1 ? 'fila' : 'filas'} · ${workbook.name}${time}${status}` : 'Excel sin cargar';
-  $('excel-copy-hint').hidden = !workbook || !!workbook.base;
+  const needsOriginal = workbook && !workbook.base;
+  $('excel-copy-hint').hidden = !needsOriginal;
+  $('export-xlsx').textContent = needsOriginal ? 'Cargar original para exportar' : 'Exportar XLSX';
   renderKeys();
 }
 
@@ -2312,14 +2314,23 @@ async function removeWorkbook() {
 async function download(format) {
   const ctx = workspace;
   if (!ctx) return;
+  const { workbook } = ctx;
+  if (format === 'xlsx' && workbook && !workbook.base) {
+    if ($('choose-excel').disabled || ctx.sync?.readingExcel) {
+      return notice('Esperá a que termine la carga del Excel.');
+    }
+    $('choose-excel').click();
+    return;
+  }
   const comparisons = ctx.comparison.results;
   const rows = exportRows(receiptList(), comparisons);
-  if (rows.length <= 1 && (format !== 'xlsx' || !ctx.workbook)) return;
+  if (rows.length <= 1 && (format !== 'xlsx' || !workbook)) return;
   const name = `control-remitos-${new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' }).format(new Date())}`;
   try {
     if (format === 'xlsx') {
       const xlsx = await dependency('XLSX', SHEET_JS);
-      const bytes = buildRemitosExcel(xlsx, rows, ctx.workbook, comparisons);
+      if (workspace !== ctx) return;
+      const bytes = buildRemitosExcel(xlsx, rows, workbook, comparisons);
       downloadFile(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${name}.xlsx`);
     } else {
       // El BOM conserva acentos en Excel. El escape evita que un texto transcripto se interprete como fórmula.

@@ -1,4 +1,4 @@
-import { excelColumns, excelDay, isReturnMovement, normalize, productCategories, productLabel, suggestProductCategory } from './control-remitos-core.js?v=devoluciones';
+import { excelColumns, excelDay, isReturnMovement, normalize, productCategories, productLabel, suggestProductCategory } from './control-remitos-core.js?v=base-completa';
 
 const workbookNamespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const featureNamespace = 'http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag';
@@ -13,16 +13,12 @@ function excelDate(value, date1904) {
   return { t: 'n', v: day + (date1904 ? 24107 : 25569), z: dateFormat };
 }
 
-function baseCopy(workbook) {
-  if (workbook?.base) return workbook.base;
-  const columns = Object.entries(excelColumns);
-  if (workbook?.rows.some(row => row.observaciones)) columns.push(['observaciones', 'OBSERVACIONES']);
+function emptyBase() {
+  const columns = Object.values(excelColumns);
   const records = [
-    { fila: 1, cells: { c0: { v: workbook ? 'BASE DE DATOS · Volvé a cargar el Excel para copiar todas sus columnas' : 'BASE DE DATOS' } } },
-    { fila: 2, cells: Object.fromEntries(columns.map(([, label], column) => ['c' + column, { v: label }])) }
+    { fila: 1, cells: { c0: { v: 'BASE DE DATOS' } } },
+    { fila: 2, cells: Object.fromEntries(columns.map((label, column) => ['c' + column, { v: label }])) }
   ];
-  for (const row of workbook?.rows || []) records.push({ fila: row.fila,
-    cells: Object.fromEntries(columns.map(([field], column) => ['c' + column, { v: row[field] || '' }])) });
   return { dateColumn: 0, colCount: columns.length, records, merges: [{ start: 0, end: columns.length - 1 }] };
 }
 
@@ -210,7 +206,8 @@ function styleWorkbook(xlsx, archive, secondBand) {
 }
 
 export function buildRemitosExcel(xlsx, rows, workbook, comparisons) {
-  const base = baseCopy(workbook);
+  const base = workbook ? workbook.base : emptyBase();
+  if (!base) throw new Error('Cargá el Excel original para exportar todas las columnas de BASE DE DATOS.');
   const book = xlsx.utils.book_new();
   if (base.date1904) book.Workbook = { WBProps: { date1904: true } };
   const returnColumn = rows[0].indexOf(returnDateHeader);

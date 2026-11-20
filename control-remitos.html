@@ -123,7 +123,7 @@
       .review-table > tbody > tr > td::before{content:attr(data-label);display:block;color:var(--soft);font-weight:650;font-size:.8rem;margin-bottom:2px}
     }
   </style>
-  <script type="module" src="control-remitos.js?v=devoluciones"></script>
+  <script type="module" src="control-remitos.js?v=base-completa"></script>
 </head>
 <body>
   <main>
@@ -138,7 +138,7 @@
         <h2 id="fuentes">Excel y Gemini</h2>
         <div class="actions"><button id="choose-excel">Cargar Excel (.xlsx)</button><button id="remove-excel" type="button" hidden>Quitar Excel de la sala</button></div>
         <p class="hint" id="excel-info" role="status">Excel sin cargar</p>
-        <p class="hint" id="excel-copy-hint" hidden>Volvé a subir el original para exportar todas las columnas de BASE DE DATOS.</p>
+        <p class="hint error" id="excel-copy-hint" role="status" hidden>La copia guardada tiene solo las columnas de comparación. Cargá el .xlsx original para exportar BASE DE DATOS completa.</p>
         <input type="file" id="excel-file" accept=".xlsx" hidden>
         <p class="hint">Los datos del Excel quedan visibles para quien tenga acceso a la sala</p>
         <p id="excel-feedback" class="hint" role="status" hidden></p>
