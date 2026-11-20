@@ -1,8 +1,9 @@
 import {
   headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
   differences, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
-  receiveReceipt, exportRows, excelDay, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, materialSimilarity
-} from './control-remitos-core.js?v=similitud-flexible';
+  receiveReceipt, exportRows, excelDay, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, materialSimilarity, productCategories
+} from './control-remitos-core.js?v=excel-rubros';
+import { buildRemitosExcel } from './control-remitos-export.js?v=excel-rubros';
 
 const $ = id => document.getElementById(id);
 const LEGACY_KEY = 'control_remitos_gemini_key_v1';
@@ -11,7 +12,7 @@ const SHARE_KEYS = 'control_remitos_share_keys_v1';
 const MODEL_CHOICE = 'control_remitos_model_choice_v1';
 const REVIEWER = 'control_remitos_reviewer_v1';
 const VERIFIED_FILTER = 'control_remitos_verified_filter_v1';
-const MAX_BATCH = 10;
+const MAX_UPLOAD = 10;
 const MAX_EDGE = 1600;
 const SHARED_PHOTO_EDGE = 1250;
 const SHARED_PHOTO_QUALITY = .72;
@@ -399,18 +400,18 @@ function updateSync() {
 async function flush(ctx) {
   const sync = ctx.sync;
   if (!updatesAllowed(ctx) || !sync?.ready || sync.writing || sync.error) return;
-  const creations = [...ctx.local.values()].filter(job => job.pending && job.id !== ctx.removingReceipt);
+  const creations = [...ctx.local.values()].filter(job => job.pending && job.id !== ctx.removingReceipt && !ctx.deletingPhotos.has(job.id));
   const patches = [...ctx.patches.values()];
   if (!creations.length && !patches.length) return;
   sync.writing = true;
   try {
     for (const job of creations) {
       if (!updatesAllowed(ctx) || ctx.sync !== sync) break;
-      if (ctx.local.get(job.id) !== job || job.id === ctx.removingReceipt) continue;
+      if (ctx.local.get(job.id) !== job || job.id === ctx.removingReceipt || ctx.deletingPhotos.has(job.id)) continue;
       const result = await sync.ref.child(job.id).transaction(current => current == null ? job.payload : undefined, undefined, false);
       if (ctx.sync !== sync) return;
       if (!ctx.values[job.id] && result.snapshot.val()) ctx.values = { ...ctx.values, [job.id]: result.snapshot.val() };
-      if (ctx.local.get(job.id) !== job || job.id === ctx.removingReceipt) continue;
+      if (ctx.local.get(job.id) !== job || job.id === ctx.removingReceipt || ctx.deletingPhotos.has(job.id)) continue;
       await storeRecords([{ ...job, pending: false }]);
       job.pending = false;
     }
@@ -878,6 +879,11 @@ function updateControls() {
   $('choose-images').disabled = !ctx || busy;
   $('upload-folder').disabled = $('new-folder').disabled = !ctx || busy;
   $('process').disabled = !ctx || busy || !ctx.selectedPhotos.size;
+  const selectable = ctx ? pendingPhotos(ctx) : [];
+  $('select-all-photos').disabled = busy || !selectable.length;
+  $('select-all-photos').textContent = selectable.length && selectable.every(job => ctx.selectedPhotos.has(job.id))
+    ? 'Deseleccionar todas' : 'Seleccionar todas';
+  $('remove-all-photos').disabled = busy || !ctx || !loadedPhotos(ctx).size;
   for (const input of $('queue').querySelectorAll('[data-queue-select], [data-queue-remove], [data-queue-move], [data-folder-edit], [data-folder-upload]')) input.disabled = busy;
   for (const button of $('receipts').querySelectorAll('[data-folder-edit]')) button.disabled = busy;
   for (const button of $('receipts').querySelectorAll('[data-photo="move"], [data-photo="remove"], [data-action="remove-receipt"]')) button.disabled = busy;
@@ -889,6 +895,7 @@ function updateControls() {
   const status = ctx?.excelUpload ? ' · pendiente de publicar' : '';
   $('excel-info').textContent = loadingExcel || ctx?.sync?.readingExcel ? 'Cargando Excel…'
     : workbook ? `${count.toLocaleString('es-AR')} ${count === 1 ? 'fila' : 'filas'} · ${workbook.name}${time}${status}` : 'Excel sin cargar';
+  $('excel-copy-hint').hidden = !workbook || !!workbook.base;
   renderKeys();
 }
 
@@ -897,16 +904,25 @@ function compareFileNames(left, right) {
   return fileNameOrder.compare(left, right);
 }
 
-function queueList(openFolder) {
-  const ctx = workspace;
-  const folders = folderNames(ctx);
-  const groups = new Map([...folders.keys()].map(id => [id, []]));
+function loadedPhotos(ctx) {
   const jobs = new Map([...ctx.local].filter(([, job]) => !job.removedFromQueue && job.source));
   for (const [id, value] of Object.entries(ctx.values)) {
     if (value?.transcripcion_eliminada && value.photo === true && !jobs.has(id) && /^r[a-z0-9-]+$/i.test(id)) {
       jobs.set(id, { id, name: value.nombre_archivo || 'Foto del remito', status: 'done' });
     }
   }
+  return jobs;
+}
+
+function pendingPhotos(ctx) {
+  return [...ctx.local.values()].filter(job => job.source && !job.removedFromQueue && job.status !== 'done');
+}
+
+function queueList(openFolder) {
+  const ctx = workspace;
+  const folders = folderNames(ctx);
+  const groups = new Map([...folders.keys()].map(id => [id, []]));
+  const jobs = loadedPhotos(ctx);
   for (const job of [...jobs.values()].sort((a, b) => compareFileNames(a.name, b.name) || b.id.localeCompare(a.id))) {
     const id = photoFolder(ctx, job.id);
     groups.get(folders.has(id) ? id : '').push(job);
@@ -959,12 +975,22 @@ function selectQueuedPhoto(event) {
   const id = input.dataset.queueSelect;
   const job = ctx?.local.get(id);
   if (!job || busy || job.status === 'done') return;
-  if (!input.checked) ctx.selectedPhotos.delete(id);
-  else if (ctx.selectedPhotos.size < MAX_BATCH) ctx.selectedPhotos.add(id);
-  else {
-    input.checked = false;
-    return jobMessage('Marcá hasta 10 fotos por tanda.', true);
+  if (input.checked) ctx.selectedPhotos.add(id);
+  else ctx.selectedPhotos.delete(id);
+  updateControls();
+}
+
+function toggleAllPhotos() {
+  const ctx = workspace;
+  if (!ctx || busy) return;
+  const jobs = pendingPhotos(ctx);
+  const selected = jobs.every(job => ctx.selectedPhotos.has(job.id));
+  for (const { id } of jobs) {
+    if (selected) ctx.selectedPhotos.delete(id);
+    else ctx.selectedPhotos.add(id);
   }
+  queueList();
+  if (jobs.length) $('queue-wrap').open = true;
   updateControls();
 }
 
@@ -1125,31 +1151,36 @@ function photoRemovalOptions(ctx, id) {
   return { shared: photo === true, local: !!job?.source && !sharing, room: photo === true || sharing };
 }
 
-function setPhotoRemovalButtons(ctx, id, disabled = false) {
-  const options = photoRemovalOptions(ctx, id);
-  $('confirm-release-photo').disabled = disabled || !options.local;
-  $('confirm-remove-photo').disabled = disabled || !options.room;
+function setPhotoRemovalButtons(choices, disabled = false) {
+  $('confirm-release-photo').disabled = disabled || !choices.some(option => option.local);
+  $('confirm-remove-photo').disabled = disabled || !choices.some(option => option.room);
   $('cancel-remove-photo').disabled = disabled;
 }
 
-function askRemovePhoto(id) {
+function askRemovePhoto(id, all = false) {
   const ctx = workspace;
   if (!ctx || busy) return;
-  const job = ctx?.local.get(id);
-  const receipt = ctx?.remote.get(id);
-  const saved = ctx?.values[id];
-  const options = photoRemovalOptions(ctx, id);
-  if (!options.local && !options.room) return;
-  removal = { ctx, id, shared: options.shared };
-  $('remove-photo-name').textContent = job?.name || receipt?.nombre_archivo || saved?.nombre_archivo || 'Foto del remito';
+  const ids = all ? [...loadedPhotos(ctx).keys()] : [id];
+  const choices = ids.map(id => ({ id, ...photoRemovalOptions(ctx, id) })).filter(item => item.local || item.room);
+  if (!choices.length) return;
+  removal = { ctx, choices, all };
+  const job = ctx.local.get(id), receipt = ctx.remote.get(id), saved = ctx.values[id];
+  const options = choices[0];
+  $('remove-photo-title').textContent = all ? '¿Dónde querés eliminar todas las fotos cargadas?' : '¿Dónde querés eliminar la foto?';
+  $('remove-photo-name').textContent = all ? `${choices.length} ${choices.length === 1 ? 'foto cargada' : 'fotos cargadas'}`
+    : job?.name || receipt?.nombre_archivo || saved?.nombre_archivo || 'Foto del remito';
   let info = 'La foto está guardada solo en este navegador.';
   if (options.shared) info = options.local
     ? 'Si elegís solo este navegador, los demás podrán seguir viendo la foto en la sala.'
     : 'La foto está compartida en la sala. Este navegador no tiene una copia original guardada.';
   else if (options.room) info = 'La copia compartida todavía se está guardando. Esperá a que esté disponible si querés conservarla.';
-  $('remove-photo-info').textContent = receipt ? `${info} La transcripción se conserva.` : info;
+  if (all) {
+    const local = choices.filter(option => option.local).length;
+    info = `Podés quitar ${local} ${local === 1 ? 'copia local' : 'copias locales'} o eliminar las fotos cargadas también de la sala. Las transcripciones se conservan.`;
+  }
+  $('remove-photo-info').textContent = !all && receipt ? `${info} La transcripción se conserva.` : info;
   $('remove-photo-error').hidden = true;
-  setPhotoRemovalButtons(ctx, id);
+  setPhotoRemovalButtons(choices);
   $('remove-photo-dialog').showModal();
 }
 
@@ -1225,56 +1256,65 @@ async function confirmRemoveReceipt() {
 }
 
 async function confirmRemovePhoto(localOnly) {
-  const { ctx, id, shared } = removal || {};
-  if (!ctx || workspace !== ctx || busy || ctx.deletingPhotos.has(id)) return;
-  if (!shared && localOnly && !photoRemovalOptions(ctx, id).local) return;
+  const { ctx, choices, all } = removal || {};
+  if (!ctx || workspace !== ctx || busy || ctx.deletingPhotos.size) return;
+  const targets = localOnly ? choices.filter(option => option.local) : choices;
+  if (!targets.length) return;
   const errorBox = $('remove-photo-error');
-  ctx.deletingPhotos.add(id);
-  setPhotoRemovalButtons(ctx, id, true);
+  for (const { id } of targets) ctx.deletingPhotos.add(id);
+  setPhotoRemovalButtons(choices, true);
   errorBox.hidden = true;
   try {
     const remove = async () => {
-      const job = await readRecords(ctx.scope, id);
-      if (localOnly) {
-        if (shared || (ctx.scope !== 'local' && job?.status === 'done' && ctx.values[id]?.photo !== false)) {
-          const sync = ctx.sync;
-          const offline = 'Conectate a la sala para comprobar que la foto reducida está guardada.';
-          if (!updatesAllowed(ctx)) throw new Error(offline);
-          // La marca se guarda en la misma escritura de Firebase que la foto reducida.
-          const savedPhoto = await sync.ref.child(id).child('photo').once('value');
-          if (ctx.sync !== sync || !updatesAllowed(ctx)) throw new Error(offline);
-          if (savedPhoto.val() !== true || ctx.values[id]?.photo !== true) {
-            throw new Error('La copia compartida no está disponible. Se conservó la foto local.');
+      const records = all ? await readRecords(ctx.scope) : [await readRecords(ctx.scope, targets[0].id)];
+      const jobs = new Map(records.filter(job => job?.type === 'photo').map(job => [job.id, job]));
+      const roomTargets = ctx.scope === 'local' ? [] : targets.filter(({ id, shared, room }) => localOnly
+        ? shared || (jobs.get(id)?.status === 'done' && ctx.values[id]?.photo !== false)
+        : room || (jobs.get(id)?.status === 'done' && ctx.values[id]?.photo !== false));
+      const photos = {}, metadata = {};
+      if (roomTargets.length) {
+        const sync = ctx.sync;
+        const offline = localOnly ? 'Conectate a la sala para comprobar que la foto reducida está guardada.'
+          : 'Conectate a la sala para eliminar las fotos compartidas.';
+        if (!updatesAllowed(ctx)) throw new Error(offline);
+        // La marca se publica de forma atómica con el JPEG. Leer metadatos evita descargar las fotos.
+        const snapshot = all ? (await sync.ref.once('value')).val() || {}
+          : { [targets[0].id]: (await sync.ref.child(targets[0].id).once('value')).val() };
+        if (ctx.sync !== sync || !updatesAllowed(ctx)) throw new Error(offline);
+        for (const { id } of roomTargets) {
+          const saved = snapshot[id];
+          if (localOnly && (saved?.photo !== true || ctx.values[id]?.photo !== true)) {
+            throw new Error(all ? 'No se pudieron comprobar todas las copias compartidas. Las fotos locales se conservaron.'
+              : 'La copia compartida no está disponible. Se conservó la foto local.');
+          }
+          if (!localOnly && (saved?.version === 1 || saved?.transcripcion_eliminada) && saved.photo !== false) {
+            photos[`imagenes/${id}`] = null;
+            photos[`remitos/${id}/photo`] = false;
+            if (ctx.values[id]) metadata[`${id}/photo`] = false;
           }
         }
-      } else {
-        let saved = ctx.values[id];
-        // Otra pestaña pudo publicar el remito después de que se abrió esta lista.
-        if (!saved && job?.receipt && updatesAllowed(ctx)) {
-          saved = (await ctx.sync.ref.child(id).once('value')).val();
-        }
-        if (job?.receipt && !job.pending && !saved && ctx.scope !== 'local' && !updatesAllowed(ctx)) {
-          throw new Error('Conectate a la sala para eliminar la foto compartida.');
-        }
-        if (ctx.scope !== 'local' && (saved?.version === 1 || saved?.transcripcion_eliminada) && saved.photo !== false) {
-          if (!updatesAllowed(ctx)) throw new Error('Conectate a la sala para eliminar la foto compartida.');
-          await ctx.sync.room.update({ [`imagenes/${id}`]: null, [`remitos/${id}/photo`]: false });
-          if (ctx.values[id]) ctx.values = withReceiptChanges(ctx.values, { [`${id}/photo`]: false });
+        if (Object.keys(photos).length) {
+          await sync.room.update(photos);
+          ctx.values = withReceiptChanges(ctx.values, metadata);
         }
       }
-      if (job?.receipt) {
-        // El trabajo también puede ser la única copia local de la transcripción.
-        const stripped = { ...job, source: null, preview: null, removedFromQueue: true };
-        if (!localOnly || ctx.values[id]?.photo === false) stripped.payload = { ...(job.payload || publicReceipt(job.receipt)), photo: false };
-        await storeRecords([stripped]);
-        const local = ctx.local.get(id);
-        if (local) Object.assign(local, stripped);
-        else ctx.local.set(id, stripped);
-      } else {
-        await storeRecords([], [[ctx.scope, id]]);
-        ctx.local.delete(id);
+      const stripped = new Map(), deletes = [];
+      for (const { id } of targets) {
+        const job = jobs.get(id);
+        if (job?.receipt) {
+          // La foto y la transcripción tienen ciclos independientes, incluso en modo local.
+          const record = { ...job, source: null, preview: null, removedFromQueue: true };
+          if (!localOnly || ctx.values[id]?.photo === false) record.payload = { ...(job.payload || publicReceipt(job.receipt)), photo: false };
+          stripped.set(id, record);
+        } else deletes.push([ctx.scope, id]);
       }
-      ctx.selectedPhotos.delete(id);
+      await storeRecords([...stripped.values()], deletes);
+      for (const { id } of targets) {
+        if (stripped.has(id)) ctx.local.set(id, stripped.get(id));
+        else ctx.local.delete(id);
+        ctx.selectedPhotos.delete(id);
+        forgetPhoto(id);
+      }
     };
     if (navigator.locks) await navigator.locks.request(`control-remitos:${ctx.scope}`, { ifAvailable: true }, lock => {
       if (!lock) throw new Error('Hay una tanda en curso en otra pestaña. Volvé a intentar cuando termine.');
@@ -1282,9 +1322,9 @@ async function confirmRemovePhoto(localOnly) {
     });
     else await remove();
     if (workspace === ctx) {
-      forgetPhoto(id);
       $('remove-photo-dialog').close();
-      jobMessage(localOnly && ctx.values[id]?.photo === true ? 'Copia local liberada. La foto reducida sigue disponible en la sala.' : 'Foto eliminada.');
+      jobMessage(all ? `${targets.length} ${targets.length === 1 ? 'foto eliminada' : 'fotos eliminadas'}${localOnly ? ' de este navegador' : ''}.`
+        : localOnly && ctx.values[targets[0].id]?.photo === true ? 'Copia local liberada. La foto reducida sigue disponible en la sala.' : 'Foto eliminada.');
     }
   } catch (error) {
     if (workspace === ctx) {
@@ -1292,9 +1332,9 @@ async function confirmRemovePhoto(localOnly) {
       errorBox.hidden = false;
     }
   } finally {
-    ctx.deletingPhotos.delete(id);
+    for (const { id } of targets) ctx.deletingPhotos.delete(id);
     if (workspace === ctx) {
-      setPhotoRemovalButtons(ctx, id);
+      setPhotoRemovalButtons(choices);
       recalculate(ctx);
       render();
       flush(ctx);
@@ -1403,7 +1443,7 @@ function choosePhotos(folder) {
 async function addPhotos(files, folder = workspace?.uploadFolder) {
   const ctx = workspace;
   if (!ctx || !files.length) return;
-  if (files.length > MAX_BATCH) return jobMessage('Seleccioná hasta 10 imágenes por tanda.', true);
+  if (files.length > MAX_UPLOAD) return jobMessage('Seleccioná hasta 10 imágenes por carga.', true);
   if (files.some(file => !/\.(jpe?g|png|hei[cf])$/i.test(file.name) && !/^image\/(jpeg|png|hei[cf])$/.test(file.type))) {
     return jobMessage('Elegí solo imágenes JPG, PNG o HEIC.', true);
   }
@@ -1590,6 +1630,13 @@ function editField(field, label, value, editable, wide = false) {
   return `<label class="field${wide ? ' wide' : ''}">${label}${editor}</label>`;
 }
 
+function rubroMarkup(line) {
+  const options = Object.entries(productCategories).map(([id, name]) => `<option value="${id}"${line.rubro === id ? ' selected' : ''}>${html(name)}</option>`).join('');
+  return `<label class="field">Rubro sugerido <select data-field="rubro" aria-label="Rubro sugerido">${options}</select></label>
+    <label class="field" data-other-rubro${line.rubro === 'otros' ? '' : ' hidden'}>Otro rubro <input data-field="otro_rubro"
+      type="text" maxlength="80" value="${html(line.otro_rubro || '')}" aria-label="Otro rubro"></label>`;
+}
+
 function lineMarkup(line, editable) {
   const highlight = editable ? `<label class="check"><input type="checkbox" data-field="resaltado" ${line.resaltado ? 'checked' : ''}> Resaltado rosa</label>`
     : `<span class="hint">${line.resaltado ? 'Resaltado rosa' : 'Sin resaltar'}</span>`;
@@ -1600,7 +1647,7 @@ function lineMarkup(line, editable) {
     : `<span class="read-field">${html(line[key] || '—')}</span>`;
   return `<tr data-line="${line.key}"><td data-label="Fecha">${compact('fecha_linea')}<span class="hint" data-effective-date></span></td>
     <td data-label="Descripción">${editable ? `<textarea rows="2" data-field="descripcion" aria-label="Descripción">${html(line.descripcion)}</textarea>
-      <button type="button" class="small" data-action="recompare" hidden>Volver a buscar en Excel</button>` : `<span class="read-field">${html(line.descripcion || '—')}</span>`}
+      ${rubroMarkup(line)}<button type="button" class="small" data-action="recompare" hidden>Volver a buscar en Excel</button>` : `<span class="read-field">${html(line.descripcion || '—')}</span>`}
       ${highlight}<details><summary>Devolución y notas <span class="hint" data-return-date></span></summary><div class="edit-grid">
       ${editField('fecha_devolucion', 'Fecha devuelta', line.fecha_devolucion, editable)}
       ${editField('cantidad_devuelta', 'Cantidad devuelta', line.cantidad_devuelta, editable)}
@@ -1828,6 +1875,8 @@ function render() {
       const row = rows.get(line.key);
       if (!row) return;
       renderFields(row, line);
+      const otherRubro = row.querySelector('[data-other-rubro]');
+      if (otherRubro) otherRubro.hidden = line.rubro !== 'otros';
       const compare = row.querySelector('[data-action="recompare"]');
       compare.hidden = !ctx.excel;
       compare.textContent = result.state === 'skipped' ? 'Comparar esta línea' : 'Volver a buscar en Excel';
@@ -1876,7 +1925,8 @@ function render() {
   for (const [key, count] of Object.entries(totals)) $(`count-${key}`).textContent = count;
   $('empty').hidden = visible > 0 || (!receipts.length && folders.size > 1);
   $('empty').textContent = receipts.length ? 'No hay remitos con esos filtros.' : 'Agregá fotos para empezar o abrí el control desde una sala del planificador para ver sus resultados.';
-  $('export-xlsx').disabled = $('export-csv').disabled = !receipts.some(receipt => receipt.lines.length);
+  $('export-csv').disabled = !receipts.some(receipt => receipt.lines.length);
+  $('export-xlsx').disabled = $('export-csv').disabled && !ctx.workbook;
   updateControls();
   queueList();
   updateSync();
@@ -2067,7 +2117,7 @@ async function receiveExcel(ctx, sync, meta) {
     await storeRecords([], [[ctx.scope, 'excel']]).catch(storeError);
     return;
   }
-  if (ctx.workbook?.revision === meta.revision || sync.readingExcel === meta.revision) return;
+  if ((ctx.workbook?.revision === meta.revision && (!meta.base || ctx.workbook.base)) || sync.readingExcel === meta.revision) return;
   const revision = meta.revision;
   if (!/^r[a-z0-9-]+$/i.test(revision) || !Number.isSafeInteger(meta.blocks) || meta.blocks < 0) {
     excelFeedback('Los datos del Excel de la sala son inválidos.', true);
@@ -2088,6 +2138,21 @@ async function receiveExcel(ctx, sync, meta) {
     if (rows.length !== meta.count) throw new Error();
     rows.sort((a, b) => a.fila - b.fila);
     const workbook = { id: 'excel', scope: ctx.scope, ...meta, rows };
+    if (meta.base) {
+      const { blocks, count, ...layout } = meta.base;
+      if (!Number.isSafeInteger(blocks) || blocks < 0) throw new Error();
+      const records = [];
+      for (let i = 0; i < blocks; i++) {
+        const snapshot = await ref.child('base').child('b' + i).once('value');
+        if (ctx.sync !== sync || sync.excelMeta?.revision !== revision || ctx.excelUpload) return;
+        const block = snapshot.val();
+        if (!block) throw new Error();
+        records.push(...Object.values(block));
+      }
+      if (records.length !== count) throw new Error();
+      records.sort((a, b) => a.fila - b.fila);
+      workbook.base = { ...layout, records };
+    }
     await storeRecords([workbook]);
     if (ctx.sync === sync && sync.excelMeta?.revision === revision && !ctx.excelUpload) useWorkbook(ctx, workbook);
   } catch {
@@ -2120,8 +2185,15 @@ async function flushExcel(ctx) {
       if (!updatesAllowed(ctx) || ctx.sync !== sync) return;
       await ref.child('b' + index).set(block);
     }
+    const { records, ...layout } = upload.base || { records: [] };
+    const baseBlocks = excelBlocks(records, true);
+    for (const [index, block] of baseBlocks.entries()) {
+      if (!updatesAllowed(ctx) || ctx.sync !== sync) return;
+      await ref.child('base').child('b' + index).set(block);
+    }
     if (!updatesAllowed(ctx) || ctx.sync !== sync) return;
     const meta = { revision: upload.revision, name: upload.name, loadedAt: upload.loadedAt, count: upload.rows.length, blocks: blocks.length };
+    if (upload.base) meta.base = { ...layout, blocks: baseBlocks.length, count: records.length };
     let previous;
     const outcome = await sync.excelRef.child('actual').transaction(current => {
       previous = current;
@@ -2158,11 +2230,11 @@ async function loadWorkbook(file) {
   excelFeedback('');
   try {
     const xlsx = await dependency('XLSX', SHEET_JS);
-    const rows = readWorkbook(xlsx, await file.arrayBuffer());
+    const { rows, base } = readWorkbook(xlsx, await file.arrayBuffer(), { includeSource: true });
     if (workspace !== ctx) return;
     const shared = ctx.scope !== 'local';
     const workbook = { id: shared ? 'excel-queued' : 'excel', scope: ctx.scope, name: file.name,
-      rows: shared ? excelBlocks(rows).flatMap(Object.values) : rows, loadedAt: Date.now(),
+      rows: shared ? excelBlocks(rows).flatMap(Object.values) : rows, base, loadedAt: Date.now(),
       ...(shared && { revision: newId() }) };
     await storeRecords([workbook]);
     const previous = ctx.excelUpload;
@@ -2212,18 +2284,17 @@ async function removeWorkbook() {
 }
 
 async function download(format) {
-  if (!workspace) return;
-  const rows = exportRows(receiptList(), workspace.comparison.results);
-  if (rows.length <= 1) return;
+  const ctx = workspace;
+  if (!ctx) return;
+  const comparisons = ctx.comparison.results;
+  const rows = exportRows(receiptList(), comparisons);
+  if (rows.length <= 1 && (format !== 'xlsx' || !ctx.workbook)) return;
   const name = `control-remitos-${new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' }).format(new Date())}`;
   try {
     if (format === 'xlsx') {
       const xlsx = await dependency('XLSX', SHEET_JS);
-      const book = xlsx.utils.book_new();
-      const sheet = xlsx.utils.aoa_to_sheet(rows);
-      sheet['!cols'] = [14, 26, 24, 15, 48, 13, 24, 12, 23].map(wch => ({ wch }));
-      xlsx.utils.book_append_sheet(book, sheet, 'Control de remitos');
-      xlsx.writeFile(book, `${name}.xlsx`);
+      const bytes = buildRemitosExcel(xlsx, rows, ctx.workbook, comparisons);
+      downloadFile(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${name}.xlsx`);
     } else {
       // El BOM conserva acentos en Excel. El escape evita que un texto transcripto se interprete como fórmula.
       const csvCell = value => {
@@ -2232,16 +2303,20 @@ async function download(format) {
         return `"${safe.replace(/"/g, '""')}"`;
       };
       const csv = rows.map(row => row.map(csvCell).join(';')).join('\r\n');
-      const url = URL.createObjectURL(new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${name}.csv`;
-      document.body.append(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      downloadFile(new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }), `${name}.csv`);
     }
   } catch (error) { notice(`No se pudo exportar. ${error.message}`, true); }
+}
+
+function downloadFile(file, name) {
+  const url = URL.createObjectURL(file);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
 $('settings-form').addEventListener('submit', async event => {
@@ -2292,6 +2367,8 @@ $('images').addEventListener('cancel', () => { photoUpload = null; });
 $('upload-folder').onchange = event => { if (workspace) selectUploadFolder(workspace, event.target.value); };
 $('new-folder').onclick = createFolder;
 $('process').onclick = processPhotos;
+$('select-all-photos').onclick = toggleAllPhotos;
+$('remove-all-photos').onclick = () => askRemovePhoto(null, true);
 $('queue').addEventListener('change', selectQueuedPhoto);
 $('queue').addEventListener('click', event => {
   const button = event.target.closest('button');

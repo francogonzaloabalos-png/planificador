@@ -75,6 +75,8 @@
     th{color:var(--soft);background:#f1f5f1;font-size:.8rem} td:nth-child(1){width:108px} td:nth-child(3){width:69px} td:nth-child(4){width:43%}
     td input:not([type=checkbox]){width:100%;padding:6px 7px} td details{margin-top:6px} td details summary{font-size:.82rem;color:var(--accent)}
     td textarea{min-height:54px} td .edit-grid{margin-top:8px;grid-template-columns:1fr} td .check{min-height:26px}
+    td [data-field="rubro"]{max-width:100%}
+    td label:has([data-field="rubro"]),td [data-other-rubro]{margin:4px 0 6px}
     tr.highlighted td:first-child{box-shadow:inset 3px 0 #d65496} td .status{font-weight:700;color:var(--tone,var(--soft));display:block;margin-bottom:5px}
     .row-detail{padding:7px;border:1px solid var(--line);border-radius:6px;margin:0 0 6px;background:#fbfcfb;overflow-wrap:anywhere}
     .row-detail div{font-size:.83rem;color:var(--soft)} .row-detail .warning{color:var(--doubt)}
@@ -106,7 +108,7 @@
       td::before{content:attr(data-label);display:block;color:var(--soft);font-weight:650;font-size:.8rem;margin-bottom:2px}
     }
   </style>
-  <script type="module" src="control-remitos.js?v=similitud-flexible"></script>
+  <script type="module" src="control-remitos.js?v=excel-rubros"></script>
 </head>
 <body>
   <main>
@@ -121,6 +123,7 @@
         <h2 id="fuentes">Excel y Gemini</h2>
         <div class="actions"><button id="choose-excel">Cargar Excel (.xlsx)</button><button id="remove-excel" type="button" hidden>Quitar Excel de la sala</button></div>
         <p class="hint" id="excel-info" role="status">Excel sin cargar</p>
+        <p class="hint" id="excel-copy-hint" hidden>Volvé a subir el original para exportar todas las columnas de BASE DE DATOS.</p>
         <input type="file" id="excel-file" accept=".xlsx" hidden>
         <p class="hint">Los datos del Excel quedan visibles para quien tenga acceso a la sala</p>
         <p id="excel-feedback" class="hint" role="status" hidden></p>
@@ -150,9 +153,11 @@
         <div class="actions">
           <button id="choose-images">Agregar fotos</button>
           <button id="process" class="primary" disabled>Transcribir seleccionadas</button>
+          <button type="button" id="select-all-photos" class="small" disabled>Seleccionar todas</button>
+          <button type="button" id="remove-all-photos" class="small danger" disabled>Eliminar todas</button>
         </div>
         <input type="file" id="images" accept=".jpg,.jpeg,.png,.heic,.heif,image/jpeg,image/png,image/heic,image/heif" multiple hidden>
-        <p class="hint">JPG, PNG o HEIC. Hasta 10 por tanda. Al transcribir se envían a Gemini y se comparte una copia reducida en la sala.</p>
+        <p class="hint">JPG, PNG o HEIC. Hasta 10 por carga. Al transcribir se envían a Gemini y se comparte una copia reducida en la sala.</p>
         <div id="progress-wrap" hidden><progress id="progress" value="0" max="1" aria-label="Avance de la tanda"></progress></div>
         <p id="task-status" class="hint" role="status"></p>
         <details id="queue-wrap" hidden><summary>Fotos cargadas</summary><div id="queue" class="folders"></div></details>

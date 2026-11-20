@@ -17,7 +17,13 @@ export const headerFields = {
 export const lineFields = {
   fecha_linea: 'Fecha de entrega', descripcion: 'Descripción', cantidad: 'Cantidad',
   resaltado: 'Resaltado rosa', fecha_devolucion: 'Fecha de devolución',
-  cantidad_devuelta: 'Cantidad devuelta', nota_manuscrita: 'Nota manuscrita', confianza: 'Confianza'
+  cantidad_devuelta: 'Cantidad devuelta', nota_manuscrita: 'Nota manuscrita', confianza: 'Confianza',
+  rubro: 'Rubro sugerido', otro_rubro: 'Otro rubro'
+};
+
+export const productCategories = {
+  epp_sujecion: 'EPP y elementos de sujeción', consumibles: 'Consumibles', herramientas_equipos: 'Herramientas y equipos',
+  otros: 'Otros', sin_clasificar: 'Sin clasificar'
 };
 
 export const states = {
@@ -30,6 +36,22 @@ export const text = value => String(value ?? '').trim();
 export function normalize(value) {
   return text(value).normalize('NFD').replace(/\p{M}/gu, '').toUpperCase()
     .replace(/[^A-Z0-9]+/g, ' ').trim();
+}
+
+export function suggestProductCategory(description, detail = '') {
+  const material = normalize(description);
+  const specification = normalize(detail);
+  if (/\b(?:BOTA[S]?|BOTIN(?:ES)?|CALZADO|CASCO[S]?|GUANTE[S]?|CHALECO[S]?|LENTE[S]?|ANTIPARRA[S]?|MASCARILLA[S]?|BARBIJO[S]?|RESPIRADOR(?:ES)?|ARNES(?:ES)?|ESLINGA[S]?|GRILLETE[S]?|MOSQUETON(?:ES)?|ABRAZADERA[S]?|TORNILLO[S]?|TUERCA[S]?|ARANDELA[S]?|CLAVO[S]?|TARUGO[S]?|PRECINTO[S]?|CINTA (?:DE )?(?:AMARRE|SUJECION))\b/.test(material)) return 'epp_sujecion';
+  if (/\b(?:DISCO[S]? (?:DE )?(?:CORTE|DESBASTE)|LIJA[S]?|ELECTRODO[S]?|ADHESIVO[S]?|SILICONA|SELLADOR(?:ES)?|CINTA (?:AISLADORA|TEFLON|PAPEL)|PINTURA[S]?|DILUYENTE|SOLVENTE|COMBUSTIBLE|GASOIL|LUBRICANTE|PILA[S]?|TRAPO[S]?|MECHA[S]?|BROCA[S]?)\b/.test(material)) return 'consumibles';
+  if (/\b(?:LLAVE[S]? DE PUERTA[S]?|CEMENTO|ARENA|RIPIO|LADRILLO[S]?|POSTE[S]?|COLUMNA[S]?|FLETE[S]?|SERVICIO[S]?)\b/.test(material)) return 'otros';
+  if (/\b(?:ESCALERA[S]?|DESTORNILLADOR(?:ES)?|TALADRO[S]?|AMOLADORA[S]?|VIBRADOR(?:ES)?|SIERRA[S]?|MAZA[S]?|MASA[S]?|MARTILLO[S]?|LLAVE[S]?|PINZA[S]?|TENAZA[S]?|ALICATE[S]?|BALDE[S]?|PALA[S]?|NIVEL(?:ES)?|PLOMADA[S]?|CORTAFIERRO[S]?|CORTA (?:HIERRO|FIERRO)|PUNTA[S]? (?:DE )?ALBANIL|ESPATULA[S]?|CUCHARA[S]?|CUCHARIN(?:ES)?|FROTACHO[S]?|FLETACHO[S]?|PROLONGADOR(?:ES)?|GENERADOR(?:ES)?|COMPRESOR(?:ES)?|BOMBA[S]?|MAT(?:RIZ|RICES)|CINTA METRICA)\b/.test(material)) return 'herramientas_equipos';
+  if (/\b(?:PROTECCION (?:PERSONAL|AUDITIVA|OCULAR|RESPIRATORIA)|EPP)\b/.test(specification)) return 'epp_sujecion';
+  return 'sin_clasificar';
+}
+
+export function productLabel(line) {
+  const category = Object.hasOwn(productCategories, line.rubro) ? line.rubro : suggestProductCategory(line.descripcion);
+  return category === 'otros' && text(line.otro_rubro) ? `Otros · ${text(line.otro_rubro)}` : productCategories[category];
 }
 
 const dayMillis = 86400000;
@@ -85,11 +107,34 @@ function excelDate(cell, xlsx, date1904) {
   return parsed ? showDate(parsed) : value;
 }
 
-export function readWorkbook(xlsx, bytes) {
-  const workbook = xlsx.read(bytes, { type: 'array', sheets: 'BASE DE DATOS' });
+export function readWorkbook(xlsx, bytes, { includeSource = false } = {}) {
+  const workbook = xlsx.read(bytes, { type: 'array', sheets: 'BASE DE DATOS', cellNF: includeSource, cellStyles: includeSource, cellDates: false });
   const sheet = workbook.Sheets['BASE DE DATOS'];
   if (!sheet?.['!ref']) throw new Error('El archivo debe tener una hoja «BASE DE DATOS».');
-  return readBaseRows(xlsx, sheet, !!workbook.Workbook?.WBProps?.date1904);
+  const date1904 = !!workbook.Workbook?.WBProps?.date1904;
+  const rows = readBaseRows(xlsx, sheet, date1904);
+  return includeSource ? { rows, base: readBaseCopy(xlsx, sheet, date1904) } : rows;
+}
+
+function readBaseCopy(xlsx, sheet, date1904) {
+  const byRow = new Map();
+  let colCount = 0, dateColumn = 0;
+  for (const [address, cell] of Object.entries(sheet)) {
+    if (address.startsWith('!') || cell.v === undefined || cell.t === 'z') continue;
+    const { r, c } = xlsx.utils.decode_cell(address);
+    if (r === 1 && normalize(cell.v) === 'FECHA') dateColumn = c;
+    const value = cell.t === 'e' ? cell.w || '#ERROR!' : cell.v;
+    if (value === '' || !['string', 'number', 'boolean'].includes(typeof value) || (typeof value === 'number' && !Number.isFinite(value))) continue;
+    if (!byRow.has(r)) byRow.set(r, { fila: r + 1, cells: {} });
+    // La copia usa los valores existentes. Puede abrirse sin las otras hojas del archivo original.
+    byRow.get(r).cells['c' + c] = { v: value, ...(typeof value === 'number' && cell.z && cell.z !== 'General' && { z: cell.z }) };
+    colCount = Math.max(colCount, c + 1);
+  }
+  const merges = (sheet['!merges'] || []).filter(({ s, e }) => s.r === 0 && e.r === 0 && s.c < colCount)
+    .map(({ s, e }) => ({ start: s.c, end: e.c }));
+  const widths = (sheet['!cols'] || []).slice(0, colCount).map(column => column?.wch || 14);
+  return { dateColumn, date1904, colCount, ...(merges.length && { merges }), ...(widths.length && { widths }),
+    records: [...byRow.values()].sort((a, b) => a.fila - b.fila) };
 }
 
 function readBaseRows(xlsx, sheet, date1904) {
@@ -439,7 +484,8 @@ function schemaObject(properties) {
 
 const stringFields = fields => Object.fromEntries(Object.keys(fields).map(key => [key, { type: 'STRING' }]));
 const ocrLine = {
-  ...stringFields(lineFields), resaltado: { type: 'BOOLEAN' }, confianza: { type: 'STRING', enum: ['alta', 'media', 'baja'] }
+  ...stringFields(lineFields), resaltado: { type: 'BOOLEAN' }, confianza: { type: 'STRING', enum: ['alta', 'media', 'baja'] },
+  rubro: { type: 'STRING', enum: Object.keys(productCategories) }
 };
 const ocrHeader = stringFields(headerFields);
 const responseSchema = schemaObject({ ...ocrHeader, lineas: { type: 'ARRAY', items: schemaObject(ocrLine) } });
@@ -453,6 +499,7 @@ ENTREGAS: fecha_linea es la fecha a la izquierda de esa línea. Una tilde ✓ de
 La cantidad entregada es el número en CANTIDAD o CANTIDAD ENTREGADA; si está vacío y el número está escrito en UNIDAD, tomalo de ahí. No tomes números que forman parte de la descripción. Conservá las cantidades como texto.
 Resaltado es true solo cuando el marcador rosa/magenta cubre parte del renglón de la herramienta. Firmas, tinta roja y tildes no cuentan como resaltado. Transcribí también las líneas sin resaltado.
 DEVOLUCIÓN: extraé fecha_devolucion y cantidad_devuelta solo si se ven para esa línea. Suelen estar en tinta roja, a la derecha. En algunos formularios la fecha está bajo TOTAL DE ENTREGA y en otros hay una columna FECHA en DEVOLUCIÓN. Guiate por la posición aunque haya tinta negra. No copies la fecha de entrega a devolución ni deduzcas devoluciones de firmas. En una hoja manuscrita no dupliques entregas a partir de marcas o listas de devolución.
+Para cada línea sugerí un rubro: epp_sujecion (protección personal o elementos de sujeción), consumibles (insumos que se gastan o reemplazan), herramientas_equipos (herramientas, accesorios reutilizables y equipos), otros (producto o servicio fuera de esos rubros; poné una descripción breve del rubro en otro_rubro) o sin_clasificar si no alcanza el texto para decidir. Dejá otro_rubro vacío salvo para otros.
 Usá cadena vacía para datos ausentes, [ilegible] para datos presentes pero ilegibles (incluí el fragmento que sí se lee), y confianza baja cuando sea difícil leer la línea. No inventes. JSON puro con todos los campos del esquema.`;
 
 function validateFields(value, schema) {
@@ -538,7 +585,11 @@ function parseTranscription(json) {
   let parsed;
   try { parsed = JSON.parse(raw); } catch { throw new Error('Gemini no devolvió JSON válido.'); }
   if (!Array.isArray(parsed?.lineas)) throw new Error('Gemini no devolvió una lista de líneas válida.');
-  return { ...validateFields(parsed, ocrHeader), lines: expandRepeatedMaterials(parsed.lineas.map(line => validateFields(line, ocrLine))) };
+  const lines = expandRepeatedMaterials(parsed.lineas.map(line => {
+    const rubro = Object.hasOwn(productCategories, line?.rubro) ? line.rubro : 'sin_clasificar';
+    return validateFields({ ...line, rubro, otro_rubro: text(line?.otro_rubro).slice(0, 80) }, ocrLine);
+  })).map(line => line.rubro === 'sin_clasificar' ? { ...line, rubro: suggestProductCategory(line.descripcion) } : line);
+  return { ...validateFields(parsed, ocrHeader), lines };
 }
 
 // También interpreta las marcas en transcripciones que ya estaban guardadas.
@@ -599,17 +650,19 @@ export function receiveReceipt(id, value) {
         verificado: verificationMark(line.verificado) };
     }).sort((a, b) => a.order - b.order || a.key.localeCompare(b.key));
   return { id, ...header, nombre_archivo: text(value.nombre_archivo), carpeta_id: text(value.carpeta_id),
-    photo: value.photo, lines: expandRepeatedMaterials(lines) };
+    photo: value.photo, lines: expandRepeatedMaterials(lines).map(line => ({
+      ...line, rubro: Object.hasOwn(productCategories, line.rubro) ? line.rubro : suggestProductCategory(line.descripcion)
+    })) };
 }
 
 // Cada bloque queda muy por debajo del límite de escritura del SDK.
-export function excelBlocks(rows) {
-  const columns = Object.keys(excelColumns).filter(key => key !== 'condicion');
+export function excelBlocks(rows, copySource = false) {
+  const columns = Object.keys(excelColumns);
   const encoder = new TextEncoder();
   const blocks = [];
   let block = {}, bytes = 0;
   for (const source of rows) {
-    const row = { fila: source.fila, ...Object.fromEntries(columns.map(key => [key, text(source[key])])) };
+    const row = copySource ? source : { fila: source.fila, ...Object.fromEntries(columns.map(key => [key, text(source[key])])) };
     const size = encoder.encode(JSON.stringify(row)).length + 20;
     if (bytes && bytes + size > 512 * 1024) {
       blocks.push(block);
@@ -624,14 +677,15 @@ export function excelBlocks(rows) {
 }
 
 export function exportRows(receipts, comparison) {
-  const rows = [['Remito', 'Persona', 'Obra / vehículo', 'Fecha de línea', 'Descripción', 'Resaltado', 'Estado', 'Fila Excel', 'Decisión']];
+  const rows = [['Remito', 'Persona', 'Obra / vehículo', 'Fecha de línea', 'Descripción', 'Resaltado', 'Estado', 'Fila Excel', 'Decisión',
+    'Rubro sugerido']];
   for (const receipt of receipts) {
     const dates = datesFor(receipt);
     receipt.lines.forEach((line, index) => {
       const local = comparison.get(lineId(receipt, index));
       rows.push([receipt.numero_remito, receipt.persona, receipt.obra_o_vehiculo, dates[index].label, line.descripcion,
         line.resaltado ? 'Sí' : 'No', states[local?.state || line.estado || 'pending'],
-        (local ? local.chosen?.fila : line.elegida?.fila) ?? '', decisions[local ? local.decision : line.decision] || '']);
+        (local ? local.chosen?.fila : line.elegida?.fila) ?? '', decisions[local ? local.decision : line.decision] || '', productLabel(line)]);
     });
   }
   return rows;
