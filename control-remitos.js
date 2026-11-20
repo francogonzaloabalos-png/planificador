@@ -2,7 +2,7 @@ import {
   headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
   differences, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
   receiveReceipt, exportRows, excelDay, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, materialSimilarity
-} from './control-remitos-core.js?v=carpetas-fotos';
+} from './control-remitos-core.js?v=similitud-excel';
 
 const $ = id => document.getElementById(id);
 const LEGACY_KEY = 'control_remitos_gemini_key_v1';
@@ -1332,15 +1332,22 @@ function resultFor(receipt, index) {
     date: datesFor(receipt)[index].delivery, chosen: line.elegida, state: line.estado || 'pending', decision: line.decision };
 }
 
-function formatRow(row, result, canChoose = false) {
+function similarityBadge(value) {
+  const level = value === 100 ? 'full' : value >= 80 ? 'high' : value >= 50 ? 'mid' : 'low';
+  return `<span class="similarity ${level}"><strong>${value}%</strong> similitud del material</span>`;
+}
+
+function formatRow(row, result, { canChoose = false, assigned = false,
+  similarity = materialSimilarity(result.line.descripcion, row.herramienta) } = {}) {
   const printable = { ...row, day: row.day ?? excelDay(row.fecha) };
   const warnings = differences(result.receipt, result.line, result.date, printable).warnings;
   return `<div class="row-detail"><b>Fila ${row.fila} · ${html(row.herramienta)}</b>
-    <div>Similitud del material: ${materialSimilarity(result.line.descripcion, row.herramienta)}%</div>
+    ${similarityBadge(similarity)}
     <div>${html(row.fecha || 'Fecha vacía')} · ${html(row.persona || 'Persona vacía')} · ${html(row.obra || 'Obra vacía')}</div>
     <div>Detalle: ${html(row.detalle || '—')} · Cantidad: ${html(row.cantidad || '—')}</div>
     <div>MOVIMIENTO: ${html(row.movimiento || '—')} · Nº REMITO: ${html(row.remito || '—')}</div>
     ${warnings.length ? `<div class="warning">${warnings.map(html).join(' · ')}</div>` : ''}
+    ${assigned ? '<div class="warning">Fila ya asignada a otra línea.</div>' : ''}
     ${canChoose ? `<button type="button" class="small" data-pick="${row.fila}">Elegir fila ${row.fila}</button>` : ''}</div>`;
 }
 
@@ -1422,12 +1429,15 @@ function renderPhoto(card, receipt, job) {
 
 function renderStatus(cell, result) {
   const mark = result.line.verificado;
-  const best = result.candidates?.[0]?.row;
+  const best = result.candidates?.[0];
   const signature = JSON.stringify([result.state, result.chosen, result.decision, result.conflict, result.stale, result.date, result.line.cantidad,
     result.line.descripcion, result.receipt.numero_remito, best, !!workspace.excel, mark]);
   if (cell.dataset.signature === signature) return;
   cell.dataset.signature = signature;
   const chosen = result.chosen ? formatRow(result.chosen, result) : '';
+  const suggestion = !chosen && best ? `<div class="row-detail"><b>Mejor sugerencia · Fila ${best.row.fila} · ${html(best.row.herramienta)}</b>
+    <div>${similarityBadge(best.similarity)}</div>${best.assigned ? '<div class="warning">Fila ya asignada a otra línea.</div>' : ''}</div>` : '';
+  const noSuggestion = !chosen && !best && workspace.excel && result.decision !== 'absent' && ['missing', 'doubtful'].includes(result.state);
   const action = (id, label) => `<button type="button" class="small" data-action="${id}">${label}</button>`;
   const buttons = [];
   if (result.state !== 'skipped') {
@@ -1437,8 +1447,9 @@ function renderStatus(cell, result) {
     if (result.decision) buttons.push(action('undo', 'Reabrir'));
   }
   const canVerify = mark || ['ok', 'doubtful', 'missing'].includes(result.state);
-  cell.innerHTML = `<span class="status ${result.state}">${states[result.state]}</span>${chosen}
-    ${!chosen && best ? `<p class="hint">Mejor candidato: ${materialSimilarity(result.line.descripcion, best.herramienta)}% de similitud</p>` : ''}
+  cell.innerHTML = `<span class="status ${result.state}">${states[result.state]}</span>${chosen}${suggestion}
+    ${noSuggestion ? similarityBadge(0) : ''}
+    ${result.state === 'skipped' && workspace.excel ? '<p class="hint">Esta línea está fuera de la comparación de resaltadas.</p>' : ''}
     ${result.decision ? `<p class="details-text">${decisions[result.decision]}</p>` : ''}
     ${result.conflict ? '<p class="details-text">La fila ya está asignada a otra línea.</p>' : ''}
     ${result.stale ? '<p class="details-text">La fila elegida cambió en el Excel de la sala.</p>' : ''}
@@ -1539,7 +1550,9 @@ function render() {
       const row = rows.get(line.key);
       if (!row) return;
       renderFields(row, line);
-      row.querySelector('[data-action="recompare"]').hidden = !ctx.excel;
+      const compare = row.querySelector('[data-action="recompare"]');
+      compare.hidden = !ctx.excel;
+      compare.textContent = result.state === 'skipped' ? 'Comparar esta línea' : 'Volver a buscar en Excel';
       row.classList.toggle('highlighted', result.line.resaltado);
       row.hidden = ($('only-issues').checked && !['doubtful', 'missing'].includes(result.state))
         || (filter !== 'all' && !!line.verificado !== (filter === 'yes'));
@@ -1681,13 +1694,16 @@ function renderChooser() {
   if (index < 0 || !workspace.excel) return;
   const result = resultFor(receipt, index);
   $('chooser-line').textContent = result.line.descripcion || 'Línea sin descripción';
-  $('suggestions').innerHTML = result.candidates?.length ? '<h3>Candidatos sugeridos</h3>' + result.candidates.map(({ row }) => formatRow(row, result, true)).join('') : '';
+  $('suggestions').innerHTML = result.candidates?.length
+    ? '<h3>Candidatos sugeridos</h3>' + result.candidates.map(({ row, similarity, assigned }) =>
+      formatRow(row, result, { canChoose: !assigned, similarity, assigned })).join('') : '';
   const words = normalize($('manual-search').value).split(' ').filter(Boolean);
   const rows = workspace.excel.items.filter(row => words.every(word => row.search.includes(word)) && rowAvailable(row, result));
   const pageSize = 12;
   const pages = Math.max(1, Math.ceil(rows.length / pageSize));
   chooser.page = Math.max(0, Math.min(chooser.page, pages - 1));
-  $('manual-results').innerHTML = rows.slice(chooser.page * pageSize, (chooser.page + 1) * pageSize).map(row => formatRow(row, result, true)).join('')
+  $('manual-results').innerHTML = rows.slice(chooser.page * pageSize, (chooser.page + 1) * pageSize)
+    .map(row => formatRow(row, result, { canChoose: true })).join('')
     || '<p class="hint">No hay filas disponibles con esa búsqueda.</p>';
   $('manual-pagination').hidden = pages <= 1;
   $('manual-prev').disabled = chooser.page === 0;

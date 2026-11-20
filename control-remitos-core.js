@@ -130,6 +130,10 @@ function tokens(value) {
     .filter(word => word && !stopWords.has(word)).map(word => aliases[word] || word);
 }
 
+function materialWords(value) {
+  return tokens(text(value).replace(/\[ilegible\]/gi, '').replace(/\bs\s*\/\s*(?=identificaci[oó]n\b)/gi, 'sin '));
+}
+
 function wordScore(a, b) {
   if (a === b) return 1;
   if (/^\d/.test(a) || /^\d/.test(b)) return 0;
@@ -153,9 +157,9 @@ function wordScore(a, b) {
   return edits <= (longest >= 7 ? 2 : 1) ? 1 - edits / longest : 0;
 }
 
-function coverage(from, to) {
+function coverage(from, to, score = wordScore) {
   if (!from.length || !to.length) return 0;
-  return from.reduce((total, word) => total + Math.max(...to.map(other => wordScore(word, other))), 0) / from.length;
+  return from.reduce((total, word) => total + Math.max(...to.map(other => score(word, other))), 0) / from.length;
 }
 
 function contextMatches(a, b) {
@@ -165,21 +169,25 @@ function contextMatches(a, b) {
   return coverage(smaller, larger) >= (smaller.length === 1 ? .85 : .82);
 }
 
-function toolScore(printed, expected) {
+const materialUnits = new Set(['KG', 'MT', 'LT', 'CM', 'MM']);
+const isMaterialWord = word => !/^\d/.test(word) && !materialUnits.has(word);
+
+function toolScore(printed, expected, strict = false, score = wordScore) {
   if (!printed.length || !expected.length) return 0;
-  // Exigir coincidencia en algún término principal evita aceptar solo «madera» o una medida.
-  const anchor = Math.max(...printed.slice(0, 2).filter(word => !/^\d/.test(word)).map(word => wordScore(word, expected[0])), 0);
-  if (anchor < .7) return 0;
-  const a = coverage(printed, expected), b = coverage(expected, printed);
+  const anchor = Math.max(...printed.slice(0, 2).filter(isMaterialWord).map(word => score(word, expected[0])), 0);
+  if (anchor < .7 && (strict || !printed.some(word => isMaterialWord(word)
+    && expected.some(other => isMaterialWord(other) && score(word, other) >= .7)))) return 0;
+  const a = coverage(printed, expected, score), b = coverage(expected, printed, score);
   const leftUnits = printed.filter(word => /^\d/.test(word));
   const rightUnits = expected.filter(word => /^\d/.test(word));
   const differentSize = leftUnits.length && rightUnits.length && !leftUnits.some(word => rightUnits.includes(word));
   return .28 * anchor + .49 * b + .23 * a - (differentSize ? .18 : 0);
 }
 
+const percent = score => Math.max(0, Math.round(100 * score));
+
 export function materialSimilarity(description, item) {
-  const printed = tokens(text(description).replace(/\[ilegible\]/gi, ''));
-  return Math.max(0, Math.round(100 * toolScore(printed, tokens(item))));
+  return percent(toolScore(materialWords(description), materialWords(item)));
 }
 
 const missingText = value => !text(value) || /^(ILEGIBLE|SIN DATO|NO LEGIBLE|S N)$/.test(normalize(value));
@@ -208,8 +216,10 @@ export function differences(receipt, line, date, row) {
 export function indexWorkbook(rows) {
   const byDay = new Map();
   const unknownDays = [];
+  const wordsByTool = new Map();
   const items = rows.map(row => {
-    const item = { ...row, day: excelDay(row.fecha), words: tokens(row.herramienta),
+    if (!wordsByTool.has(row.herramienta)) wordsByTool.set(row.herramienta, materialWords(row.herramienta));
+    const item = { ...row, day: excelDay(row.fecha), words: wordsByTool.get(row.herramienta),
       search: normalize([row.fila, ...Object.keys(excelColumns).map(key => row[key])].join(' ')) };
     if (item.day === null) unknownDays.push(item);
     else {
@@ -218,21 +228,21 @@ export function indexWorkbook(rows) {
     }
     return item;
   });
-  return { items, byDay, unknownDays, byRow: new Map(items.map(row => [row.fila, row])) };
+  return { items, byDay, unknownDays, byRow: new Map(items.map(row => [row.fila, row])), materialMatches: new Map() };
 }
 
 function rank(receipt, line, date, excel) {
   const person = missingText(receipt.persona) ? '' : receipt.persona.replace(/\[ilegible\]/gi, '');
   const work = missingText(receipt.obra_o_vehiculo) || /^(HERRAMIENTAS? )?A CARGO$/.test(normalize(receipt.obra_o_vehiculo))
     ? '' : receipt.obra_o_vehiculo.replace(/\[ilegible\]/gi, '');
-  const printed = tokens(line.descripcion.replace(/\[ilegible\]/gi, ''));
+  const printed = materialWords(line.descripcion);
   if (!printed.length) return [];
   const candidates = [];
   const pool = date?.day == null ? excel.items : excel.unknownDays.concat(
     ...Array.from({ length: 7 }, (_, index) => excel.byDay.get(date.day + index - 3) || []));
   for (const row of pool) {
     if ((person && !contextMatches(person, row.persona)) || (work && !contextMatches(work, row.obra))) continue;
-    const similarity = toolScore(printed, row.words);
+    const similarity = toolScore(printed, row.words, true);
     if (similarity < .62) continue;
     const { days, qtyDiffers } = differences(receipt, line, date, row);
     const sameNumber = person && remitoNumber(receipt.numero_remito) && remitoNumber(receipt.numero_remito) === remitoNumber(row.remito);
@@ -241,9 +251,32 @@ function rank(receipt, line, date, excel) {
     const score = similarity + detailScore + (days == null ? -.06 : .10 - days * .025)
       + (sameNumber ? .07 : 0) - (qtyDiffers ? .06 : 0);
     const clear = similarity >= .78 && days != null && !qtyDiffers && line.confianza !== 'baja';
-    candidates.push({ row, score, clear });
+    candidates.push({ row, score, clear, similarity: percent(similarity) });
   }
   return candidates.sort((a, b) => b.score - a.score || a.row.fila - b.row.fila);
+}
+
+// El parecido del material se reutiliza entre líneas y al recalcular con el mismo Excel.
+function similarMaterials(excel, description) {
+  const printed = materialWords(description);
+  if (!printed.length) return [];
+  const key = printed.join(' ');
+  if (excel.materialMatches.has(key)) return excel.materialMatches.get(key);
+  const byTool = new Map();
+  const byWord = new Map();
+  const score = (a, b) => {
+    const pair = a < b ? `${a} ${b}` : `${b} ${a}`;
+    if (!byWord.has(pair)) byWord.set(pair, wordScore(a, b));
+    return byWord.get(pair);
+  };
+  const matches = [];
+  for (const row of excel.items) {
+    if (!byTool.has(row.words)) byTool.set(row.words, percent(toolScore(printed, row.words, false, score)));
+    const similarity = byTool.get(row.words);
+    if (similarity > 0) matches.push({ row, similarity });
+  }
+  excel.materialMatches.set(key, matches);
+  return matches;
 }
 
 export function chosenRow(row) {
@@ -318,8 +351,19 @@ export function compareReceipts(local, remote, excel, includeAll) {
     } else result.state = 'doubtful';
   }
   for (const result of results.values()) {
-    result.candidates = result.candidates.filter(({ row }) => !sharedRows.has(row.fila)
-      && (!used.has(row.fila) || used.get(row.fila) === result.id)).slice(0, 3);
+    const available = ({ row }) => !sharedRows.has(row.fila) && (!used.has(row.fila) || used.get(row.fila) === result.id);
+    const strict = result.candidates.filter(available);
+    if (!result.chosen && (result.state === 'doubtful' || result.state === 'missing') && result.decision !== 'absent' && excel) {
+      const contextualScores = new Map(strict.map(({ row, score }) => [row.fila, score]));
+      const distance = row => result.date?.day != null && row.day != null ? Math.abs(result.date.day - row.day) : Infinity;
+      result.candidates = similarMaterials(excel, result.line.descripcion).slice()
+        .sort((a, b) => b.similarity - a.similarity
+          || Number(available(b)) - Number(available(a))
+          || (contextualScores.get(b.row.fila) ?? 0) - (contextualScores.get(a.row.fila) ?? 0)
+          || distance(a.row) - distance(b.row) || a.row.fila - b.row.fila)
+        .slice(0, 3).map(candidate => ({ ...candidate, assigned: !available(candidate) }));
+      if (result.state === 'missing' && (result.candidates[0]?.similarity ?? 0) >= 35) result.state = 'doubtful';
+    } else result.candidates = strict.slice(0, 3);
   }
   return { results, used, sharedRows };
 }
