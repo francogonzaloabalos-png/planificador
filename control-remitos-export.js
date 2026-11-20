@@ -1,4 +1,5 @@
-import { excelColumns, excelDay, isReturnMovement, normalize, productCategories, productLabel, suggestProductCategory } from './control-remitos-core.js?v=verificacion-fisica';
+import { excelColumns, excelDay, excelEditLabel, excelEditLabels, excelEditValue, excelRowEdits,
+  isReturnMovement, normalize, productCategories, productLabel, suggestProductCategory } from './control-remitos-core.js?v=ajustes-excel';
 
 const workbookNamespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const featureNamespace = 'http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag';
@@ -42,13 +43,17 @@ function buildBaseSheet(xlsx, workbook, base, comparisons) {
   };
   const put = (sheet, r, c, value) => { sheet[xlsx.utils.encode_cell({ r, c })] = value; };
   const lastRow = base.records.reduce((row, record) => Math.max(row, record.fila), 2);
-  const width = kept.length + 3;
+  const changesColumn = kept.length + 3;
+  const width = changesColumn + 1;
   const sheet = { '!ref': xlsx.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastRow - 1, c: width - 1 } }) };
   const matched = new Map();
   for (const result of comparisons.values()) {
     if (result.state === 'ok' && result.chosen) matched.set(result.chosen.fila, result);
   }
   const sourceRows = new Map((workbook?.rows || []).map(row => [row.fila, row]));
+  const sourceColumns = new Map(Object.entries(headers).map(([key, cell]) => [normalize(cell.v), column(Number(key.slice(1)))]));
+  const remitoColumn = remitoKey ? column(Number(remitoKey.slice(1))) : undefined;
+  const movementColumn = movementKey ? column(Number(movementKey.slice(1))) : undefined;
   for (const source of base.records) {
     const r = source.fila - 1;
     for (const [key, cell] of Object.entries(source.cells)) {
@@ -68,24 +73,38 @@ function buildBaseSheet(xlsx, workbook, base, comparisons) {
     put(sheet, r, 0, { t: 'b', v: !!result?.line.verificado });
     put(sheet, r, 2, { t: 's', v: rubro });
     const correction = result?.correccionExcel;
-    if (correction && movementKey) {
-      put(sheet, r, column(Number(movementKey.slice(1))), { t: 's', v: correction.movimiento });
+    const { fecha_devolucion: editedReturnDate, ...edits } = excelRowEdits(result, sourceRow);
+    const changes = [];
+    for (const [field, value] of Object.entries(edits)) {
+      const target = field === 'remito' ? remitoColumn : sourceColumns.get(excelColumns[field]);
+      if (target === undefined || excelEditValue(field, sourceRow[field]) === value) continue;
+      const cell = field === 'fecha' ? excelDate(value, base.date1904)
+        : field === 'cantidad' ? { t: 'n', v: Number(value) } : { t: 's', v: value };
+      put(sheet, r, target, cell);
+      changes.push(`${excelEditLabels[field]} · ${excelEditLabel(field, sourceRow[field]) || 'Sin dato'} → ${excelEditLabel(field, value)}`);
     }
     const movement = correction?.movimiento ?? sourceRow.movimiento;
-    const returnDate = correction?.fecha_devolucion ?? (result?.returnDay != null ? result.returnLabel : '');
-    if (isReturnMovement(movement) && returnDate) {
-      put(sheet, r, returnColumn, excelDate(returnDate, base.date1904));
+    if (correction && movementColumn !== undefined && movement !== sourceRow.movimiento) {
+      put(sheet, r, movementColumn, { t: 's', v: movement });
+      changes.push(`Movimiento · ${sourceRow.movimiento || 'Sin dato'} → ${movement}`);
     }
+    const savedReturnDate = editedReturnDate ?? correction?.fecha_devolucion;
+    const returnDate = savedReturnDate ?? (isReturnMovement(movement) && result?.returnDay != null ? result.returnLabel : '');
+    if (returnDate) put(sheet, r, returnColumn, excelDate(returnDate, base.date1904));
+    if (savedReturnDate) changes.push(`Fecha de devolución · Sin dato → ${excelEditLabel('fecha_devolucion', savedReturnDate)}`);
+    if (changes.length) put(sheet, r, changesColumn, { t: 's', v: changes.join('\n') });
   }
   put(sheet, 1, 0, { t: 's', v: 'Verificado con remito' });
   put(sheet, 1, 2, { t: 's', v: 'Rubro sugerido' });
   put(sheet, 1, returnColumn, { t: 's', v: returnDateHeader });
+  put(sheet, 1, changesColumn, { t: 's', v: 'Cambios en Excel' });
   const fallbackWidths = [13, 14, 34, 17, 15, 12, 22, 20, 17, 16, 18, 14, 32, 13, 20, 17, 30];
   const cols = [{ wch: 24 }, { wch: 13 }, { wch: 31 }];
   for (const index of kept) {
     if (index !== base.dateColumn) cols[column(index)] = { wch: Math.max(12, base.widths?.[index] || fallbackWidths[index] || 14) };
   }
   cols[returnColumn] = { wch: 22 };
+  cols[changesColumn] = { wch: 45 };
   sheet['!cols'] = cols;
   const merges = (base.merges || []).filter(({ start, end }) => start >= 0 && end > start && end < base.colCount
     && (base.dateColumn === 0 || base.dateColumn < start || base.dateColumn > end));

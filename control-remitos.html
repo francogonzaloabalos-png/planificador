@@ -93,6 +93,7 @@
     .field-match.match{background:#e1f4e9;color:#14543a}
     .field-match.similar{background:#fff1cf;color:#784500}
     .field-match.different{background:#fbe9ed;color:#8e2030}
+    .comparison-fields .field-edit{display:block;margin-top:4px;min-height:25px;padding:2px 4px;font-size:.75rem}
     .return-date{color:var(--accent);font-weight:700}
     .return-alert{margin:5px 0;padding:5px 8px;border-left:3px solid #bf8c40;background:#fff4dc;color:var(--doubt);font-size:.86rem}
     .row-detail .movement-correction{color:var(--accent);font-weight:650}
@@ -125,7 +126,7 @@
       .review-table > tbody > tr > td::before{content:attr(data-label);display:block;color:var(--soft);font-weight:650;font-size:.8rem;margin-bottom:2px}
     }
   </style>
-  <script type="module" src="control-remitos.js?v=verificacion-fisica"></script>
+  <script type="module" src="control-remitos.js?v=ajustes-excel"></script>
 </head>
 <body>
   <main>
@@ -235,6 +236,24 @@
         <button type="button" id="cancel-movement">Cancelar</button>
         <button type="button" id="restore-movement" hidden>Restaurar original</button>
         <button type="submit" id="save-movement" class="primary">Guardar corrección</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="excel-edit-dialog" class="photo-dialog" aria-labelledby="excel-edit-title">
+    <form id="excel-edit-form" class="stack">
+      <h2 id="excel-edit-title">Cambiar dato en Excel</h2>
+      <p id="excel-edit-row" class="hint"></p>
+      <p id="excel-edit-original"></p>
+      <p id="excel-edit-remito"></p>
+      <label class="field">Nuevo valor para el Excel <input id="excel-edit-value" type="text" required autofocus></label>
+      <button type="button" id="excel-edit-copy" class="small">Usar dato del remito</button>
+      <p id="excel-edit-info" class="hint"></p>
+      <p id="excel-edit-error" class="hint error" role="status" hidden></p>
+      <div class="actions">
+        <button type="button" id="excel-edit-cancel">Cancelar</button>
+        <button type="button" id="excel-edit-restore" hidden>Revertir cambio</button>
+        <button type="submit" id="excel-edit-save" class="primary">Guardar cambio</button>
       </div>
     </form>
   </dialog>
