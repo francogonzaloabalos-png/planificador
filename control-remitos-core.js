@@ -121,6 +121,16 @@ export function readWorkbook(xlsx, bytes, { includeSource = false } = {}) {
   return includeSource ? { rows, base: readBaseCopy(xlsx, sheet, date1904) } : rows;
 }
 
+export function sameWorkbookRows(current, original) {
+  if (current.length !== original.length) return false;
+  const byRow = new Map(original.map(row => [row.fila, row]));
+  const fields = ['fecha', 'codigo', 'herramienta', 'cantidad', 'persona', 'obra', 'remito'];
+  return current.every(row => {
+    const other = byRow.get(row.fila);
+    return other && fields.every(field => normalize(row[field]) === normalize(other[field]));
+  });
+}
+
 function readBaseCopy(xlsx, sheet, date1904) {
   const byRow = new Map();
   let colCount = 0, dateColumn = 0;
@@ -423,7 +433,7 @@ export function indexWorkbook(rows, base) {
   const observations = savedObservations(base);
   const items = rows.map(row => {
     if (!wordsByTool.has(row.herramienta)) wordsByTool.set(row.herramienta, materialWords(row.herramienta));
-    const item = { ...row, observaciones: row.observaciones ?? observations.get(row.fila) ?? '',
+    const item = { ...row, observaciones: text(row.observaciones) || observations.get(row.fila) || '',
       day: excelDay(row.fecha), remitoNumber: remitoNumber(row.remito), words: wordsByTool.get(row.herramienta) };
     item.search = normalize([item.fila, ...comparisonColumns.map(key => item[key])].join(' '));
     if (item.day === null) unknownDays.push(item);

@@ -1,4 +1,4 @@
-import { excelColumns, excelDay, isReturnMovement, normalize, productCategories, productLabel, suggestProductCategory } from './control-remitos-core.js?v=movimiento-remito';
+import { excelColumns, excelDay, isReturnMovement, normalize, productCategories, productLabel, suggestProductCategory } from './control-remitos-core.js?v=verificacion-fisica';
 
 const workbookNamespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const featureNamespace = 'http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag';
@@ -23,18 +23,26 @@ function emptyBase() {
 }
 
 function buildBaseSheet(xlsx, workbook, base, comparisons) {
-  const originalColumn = index => index === base.dateColumn ? 1 : index + (index < base.dateColumn ? 3 : 2);
   const headers = base.records.find(row => row.fila === 2)?.cells || {};
+  const omitted = new Set(Object.entries(headers).filter(([, cell]) => /^(PRECIO UNITARIO|TOTAL)$/.test(normalize(cell.v)))
+    .map(([key]) => Number(key.slice(1))));
+  const kept = Array.from({ length: base.colCount }, (_, index) => index).filter(index => !omitted.has(index));
+  const positions = new Map(kept.map((index, position) => [index, position]));
+  const datePosition = positions.get(base.dateColumn);
+  const originalColumn = index => {
+    const position = positions.get(index);
+    return position === datePosition ? 1 : position + (position < datePosition ? 3 : 2);
+  };
   const remitoKey = Object.keys(headers).find(key => /^(N|NRO) REMITO$/.test(normalize(headers[key].v)));
   const movementKey = Object.keys(headers).find(key => normalize(headers[key].v) === excelColumns.movimiento);
-  const returnColumn = remitoKey ? originalColumn(Number(remitoKey.slice(1))) + 1 : base.colCount + 2;
+  const returnColumn = remitoKey ? originalColumn(Number(remitoKey.slice(1))) + 1 : kept.length + 2;
   const column = index => {
     const position = originalColumn(index);
     return position < returnColumn ? position : position + 1;
   };
   const put = (sheet, r, c, value) => { sheet[xlsx.utils.encode_cell({ r, c })] = value; };
   const lastRow = base.records.reduce((row, record) => Math.max(row, record.fila), 2);
-  const width = base.colCount + 3;
+  const width = kept.length + 3;
   const sheet = { '!ref': xlsx.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastRow - 1, c: width - 1 } }) };
   const matched = new Map();
   for (const result of comparisons.values()) {
@@ -44,7 +52,9 @@ function buildBaseSheet(xlsx, workbook, base, comparisons) {
   for (const source of base.records) {
     const r = source.fila - 1;
     for (const [key, cell] of Object.entries(source.cells)) {
-      const c = column(Number(key.slice(1)));
+      const index = Number(key.slice(1));
+      if (omitted.has(index)) continue;
+      const c = column(index);
       const v = cell.v;
       const t = typeof v === 'number' ? 'n' : typeof v === 'boolean' ? 'b' : 's';
       const value = c === 1 && r >= 2 && typeof v === 'string' ? excelDate(v, base.date1904) : v;
@@ -72,14 +82,17 @@ function buildBaseSheet(xlsx, workbook, base, comparisons) {
   put(sheet, 1, returnColumn, { t: 's', v: returnDateHeader });
   const fallbackWidths = [13, 14, 34, 17, 15, 12, 22, 20, 17, 16, 18, 14, 32, 13, 20, 17, 30];
   const cols = [{ wch: 24 }, { wch: 13 }, { wch: 31 }];
-  for (let index = 0; index < base.colCount; index++) {
+  for (const index of kept) {
     if (index !== base.dateColumn) cols[column(index)] = { wch: Math.max(12, base.widths?.[index] || fallbackWidths[index] || 14) };
   }
   cols[returnColumn] = { wch: 22 };
   sheet['!cols'] = cols;
   const merges = (base.merges || []).filter(({ start, end }) => start >= 0 && end > start && end < base.colCount
     && (base.dateColumn === 0 || base.dateColumn < start || base.dateColumn > end));
-  sheet['!merges'] = merges.map(({ start, end }) => ({ s: { r: 0, c: column(start) }, e: { r: 0, c: column(end) } }));
+  sheet['!merges'] = merges.flatMap(({ start, end }) => {
+    const retained = kept.filter(index => index >= start && index <= end);
+    return retained.length > 1 ? [{ s: { r: 0, c: column(retained[0]) }, e: { r: 0, c: column(retained.at(-1)) } }] : [];
+  });
   for (let r = 0; r < 2; r++) for (let c = 0; c < width; c++) {
     const address = xlsx.utils.encode_cell({ r, c });
     if (!sheet[address]) sheet[address] = { t: 's', v: '' };

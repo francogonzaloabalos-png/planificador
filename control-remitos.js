@@ -2,9 +2,9 @@ import {
   headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
   compareRowFields, reviewReturn, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
   receiveReceipt, exportRows, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, productCategories,
-  excelCorrection, isReturnMovement
-} from './control-remitos-core.js?v=movimiento-remito';
-import { buildRemitosExcel } from './control-remitos-export.js?v=movimiento-remito';
+  excelCorrection, isReturnMovement, sameWorkbookRows
+} from './control-remitos-core.js?v=verificacion-fisica';
+import { buildRemitosExcel } from './control-remitos-export.js?v=verificacion-fisica';
 
 const $ = id => document.getElementById(id);
 const LEGACY_KEY = 'control_remitos_gemini_key_v1';
@@ -899,7 +899,7 @@ function updateControls() {
     : workbook ? `${count.toLocaleString('es-AR')} ${count === 1 ? 'fila' : 'filas'} · ${workbook.name}${time}${status}` : 'Excel sin cargar';
   const needsOriginal = workbook && !workbook.base;
   $('excel-copy-hint').hidden = !needsOriginal;
-  $('export-xlsx').textContent = needsOriginal ? 'Cargar original para exportar' : 'Exportar XLSX';
+  $('export-xlsx').textContent = needsOriginal ? 'Completar columnas para exportar' : 'Exportar XLSX';
   renderKeys();
 }
 
@@ -2293,10 +2293,20 @@ async function flushExcel(ctx) {
     let previous;
     const outcome = await sync.excelRef.child('actual').transaction(current => {
       previous = current;
+      if (upload.completesRevision && current?.revision !== upload.completesRevision) return;
       return meta;
     }, undefined, false);
-    if (ctx.sync !== sync || !outcome.committed) return;
-    const workbook = { ...upload, id: 'excel' };
+    if (ctx.sync !== sync) return;
+    if (!outcome.committed) {
+      ctx.excelUpload = null;
+      await storeRecords([], [[ctx.scope, 'excel-queued']]);
+      await receiveExcel(ctx, sync, outcome.snapshot.val());
+      discardExcelRevision(sync, upload, ctx.workbook?.revision).catch(() => {});
+      if (workspace === ctx) excelFeedback('El Excel de la sala cambió mientras se agregaban las columnas.', true);
+      return;
+    }
+    const { completesRevision, ...saved } = upload;
+    const workbook = { ...saved, id: 'excel' };
     await storeRecords([workbook], [[ctx.scope, 'excel-queued']]);
     ctx.excelUpload = null;
     useWorkbook(ctx, workbook);
@@ -2317,9 +2327,11 @@ async function flushExcel(ctx) {
   }
 }
 
-async function loadWorkbook(file) {
+async function loadWorkbook(file, complete = false) {
   const ctx = workspace;
   if (!ctx || !file || loadingExcel || ctx.sync?.writingExcel) return;
+  const current = ctx.workbook;
+  if (complete && (!current || current.base || ctx.sync?.readingExcel)) return;
   if (!/\.xlsx$/i.test(file.name)) return excelFeedback('Elegí un archivo .xlsx.', true);
   loadingExcel = true;
   updateControls();
@@ -2328,10 +2340,14 @@ async function loadWorkbook(file) {
     const xlsx = await dependency('XLSX', SHEET_JS);
     const { rows, base } = readWorkbook(xlsx, await file.arrayBuffer(), { includeSource: true });
     if (workspace !== ctx) return;
+    if (complete && (ctx.workbook !== current || !sameWorkbookRows(current.rows, rows))) {
+      return excelFeedback('Las filas del archivo deben coincidir con las de la sala. Elegí el Excel original de esta revisión.', true);
+    }
     const shared = ctx.scope !== 'local';
-    const workbook = { id: shared ? 'excel-queued' : 'excel', scope: ctx.scope, name: file.name,
-      rows: shared ? excelBlocks(rows).flatMap(Object.values) : rows, base, loadedAt: Date.now(),
-      ...(shared && { revision: newId() }) };
+    const workbook = { id: shared ? 'excel-queued' : 'excel', scope: ctx.scope, name: complete ? current.name : file.name,
+      rows: complete ? current.rows : shared ? excelBlocks(rows).flatMap(Object.values) : rows, base,
+      loadedAt: complete ? current.loadedAt : Date.now(), ...(shared && { revision: newId() }),
+      ...(complete && shared && !ctx.excelUpload && { completesRevision: current.revision }) };
     await storeRecords([workbook]);
     const previous = ctx.excelUpload;
     ctx.excelUpload = shared ? workbook : null;
@@ -2387,7 +2403,7 @@ async function download(format) {
     if ($('choose-excel').disabled || ctx.sync?.readingExcel) {
       return notice('Esperá a que termine la carga del Excel.');
     }
-    $('choose-excel').click();
+    $('excel-complete-file').click();
     return;
   }
   const comparisons = ctx.comparison.results;
@@ -2461,6 +2477,7 @@ $('share-keys').onchange = event => {
 $('choose-excel').onclick = () => $('excel-file').click();
 $('remove-excel').onclick = removeWorkbook;
 $('excel-file').onchange = event => { loadWorkbook(event.target.files[0]); event.target.value = ''; };
+$('excel-complete-file').onchange = event => { loadWorkbook(event.target.files[0], true); event.target.value = ''; };
 $('choose-images').onclick = () => choosePhotos();
 $('images').onchange = event => {
   const target = photoUpload;
