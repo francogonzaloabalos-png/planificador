@@ -39,6 +39,8 @@ const photoUrls = new Map();
 let removal;
 let receiptRemoval;
 let move;
+let folderEdit;
+let photoUpload;
 let previewUrl;
 let previewTicket = 0;
 const libraries = new Map();
@@ -145,7 +147,7 @@ async function refreshRoom() {
   excelFeedback('');
   if ($('chooser').open) $('chooser').close();
   if ($('photo-preview').open) $('photo-preview').close();
-  for (const id of ['remove-photo-dialog', 'move-photo-dialog', 'remove-receipt-dialog']) if ($(id).open) $(id).close();
+  for (const id of ['remove-photo-dialog', 'move-photo-dialog', 'remove-receipt-dialog', 'folder-name-dialog']) if ($(id).open) $(id).close();
   for (const [id] of photoUrls) forgetPhoto(id);
   photoUrls.clear();
   cards.clear();
@@ -172,7 +174,7 @@ async function refreshRoom() {
     const localFolders = new Map(records.filter(record => record.type === 'folder').map(folder => [folder.id, folder]));
     workspace = {
       scope, workbook, excel: workbook ? indexWorkbook(workbook.rows) : null, local, selectedPhotos: new Set(),
-      folders, localFolders, uploadFolder: '', deletingPhotos: new Set(),
+      folders, localFolders, uploadFolder: records.find(record => record.id === 'upload-folder')?.folder || '', deletingPhotos: new Set(),
       values, remote: new Map(), excelUpload, patches: new Map(records.filter(record => record.type === 'patch')
         .sort((a, b) => a.id.localeCompare(b.id)).map(record => [record.id, record])),
       includeAll: records.find(record => record.id === 'options')?.includeAll === true,
@@ -314,6 +316,11 @@ function patchReceiptId(patch) {
   return Object.keys(patch.fields)[0].split('/')[0];
 }
 
+function canApplyReceiptPatch(value, patch) {
+  if (patch.onlyUnfiled) return !!value && (value.version === 1 || value.transcripcion_eliminada) && !validFolderId(value.carpeta_id);
+  return value?.version === 1 && !value.transcripcion_eliminada;
+}
+
 function removedTranscript(value) {
   return { transcripcion_eliminada: true,
     ...(value.nombre_archivo && { nombre_archivo: value.nombre_archivo }),
@@ -339,7 +346,7 @@ function saveReceiptCache(ctx) {
     ctx.selectedPhotos.delete(id);
   }
   for (const [id, patch] of ctx.patches) {
-    if (!ctx.values[patchReceiptId(patch)]?.transcripcion_eliminada) continue;
+    if (patch.onlyUnfiled || !ctx.values[patchReceiptId(patch)]?.transcripcion_eliminada) continue;
     ctx.patches.delete(id);
     deletes.push([ctx.scope, id]);
   }
@@ -352,7 +359,7 @@ function recalculate(ctx) {
     if (job.receipt && !values[job.id]) values[job.id] = job.payload || publicReceipt(job.receipt);
   }
   for (const patch of ctx.patches.values()) {
-    if (!values[patchReceiptId(patch)]?.transcripcion_eliminada) values = withReceiptChanges(values, patch.fields);
+    if (canApplyReceiptPatch(values[patchReceiptId(patch)], patch)) values = withReceiptChanges(values, patch.fields);
   }
   const receipts = new Map();
   for (const [id, value] of Object.entries(values)) {
@@ -361,6 +368,7 @@ function recalculate(ctx) {
     if (receipt) receipts.set(id, receipt);
   }
   ctx.remote = receipts;
+  ctx.receiptValues = values;
   ctx.comparison = compareReceipts(receipts.values(), [], ctx.excel, ctx.includeAll);
 }
 
@@ -413,10 +421,10 @@ async function flush(ctx) {
       const previous = ctx.values;
       // Una edición atrasada no puede volver a crear datos de un remito eliminado.
       const result = await sync.ref.child(id).transaction(current =>
-        current?.version === 1 && !current.transcripcion_eliminada ? withReceiptChanges(current, fields) : undefined, undefined, false);
+        canApplyReceiptPatch(current, patch) ? withReceiptChanges(current, fields) : undefined, undefined, false);
       if (ctx.sync !== sync) return;
       const saved = result.snapshot.val();
-      if (!result.committed && saved?.version === 1 && !saved.transcripcion_eliminada) throw new Error('Edición pendiente de sincronizar.');
+      if (!result.committed && canApplyReceiptPatch(saved, patch)) throw new Error('Edición pendiente de sincronizar.');
       if (ctx.values === previous) ctx.values = withReceiptChanges(ctx.values, { [id]: saved });
       await storeRecords([], [[ctx.scope, patch.id]]);
       ctx.patches.delete(patch.id);
@@ -625,11 +633,31 @@ function excelFeedback(message, error = false) {
   feedback.classList.toggle('error', error);
 }
 
+const validFolderId = id => typeof id === 'string' && /^f[a-z0-9-]+$/i.test(id);
+const folderId = value => validFolderId(value) ? value : '';
+
+function photoFolder(ctx, id) {
+  const receipt = ctx.receiptValues[id];
+  return folderId(receipt ? receipt.carpeta_id : ctx.local.get(id)?.carpeta_id);
+}
+
 function folderNames(ctx) {
   const folders = new Map();
-  for (const [id, folder] of [...ctx.localFolders, ...Object.entries(ctx.folders)]) {
-    if (/^f[a-z0-9-]+$/i.test(id) && text(folder?.nombre)) folders.set(id, text(folder.nombre));
+  for (const [id, folder] of [...Object.entries(ctx.folders), ...ctx.localFolders]) {
+    if (validFolderId(id) && text(folder?.nombre)) folders.set(id, text(folder.nombre));
   }
+  // La asociación sigue siendo válida aunque todavía no haya llegado el nombre de la carpeta.
+  for (const [id, receipt] of Object.entries(ctx.receiptValues)) {
+    const assigned = folderId(receipt?.carpeta_id);
+    if (assigned && !folders.has(assigned) && (receipt.version === 1 || receipt.photo === true || ctx.local.get(id)?.source)) {
+      folders.set(assigned, 'Carpeta sin nombre');
+    }
+  }
+  for (const [id, job] of ctx.local) {
+    const assigned = photoFolder(ctx, id);
+    if (job.source && assigned && !folders.has(assigned)) folders.set(assigned, 'Carpeta sin nombre');
+  }
+  if (validFolderId(ctx.uploadFolder) && !folders.has(ctx.uploadFolder)) folders.set(ctx.uploadFolder, 'Carpeta sin nombre');
   return new Map([['', 'Sin carpeta'], ...[...folders].sort(([, a], [, b]) => a.localeCompare(b, 'es-AR'))]);
 }
 
@@ -648,12 +676,19 @@ async function flushFolders(ctx) {
   const pending = [...ctx.localFolders.values()].filter(folder => folder.pending);
   if (!pending.length) return;
   sync.writingFolders = true;
+  const previous = ctx.folders;
   try {
-    await sync.foldersRef.update(Object.fromEntries(pending.map(({ id, nombre }) => [id, { nombre }])));
-    await storeRecords([], pending.map(({ id }) => [ctx.scope, id]));
+    await sync.foldersRef.update(Object.fromEntries(pending.map(({ id, nombre }) => [`${id}/nombre`, nombre])));
+    if (ctx.sync !== sync) return;
+    const published = { ...ctx.folders };
     for (const { id, nombre } of pending) {
-      ctx.folders[id] = { nombre };
-      ctx.localFolders.delete(id);
+      if (published[id]?.nombre === previous[id]?.nombre) published[id] = { ...published[id], nombre };
+    }
+    ctx.folders = published;
+    const completed = pending.filter(folder => ctx.localFolders.get(folder.id) === folder);
+    await storeRecords([{ id: 'folders-cloud', scope: ctx.scope, values: published }], completed.map(({ id }) => [ctx.scope, id]));
+    for (const folder of completed) {
+      if (ctx.localFolders.get(folder.id) === folder) ctx.localFolders.delete(folder.id);
     }
   } catch {
     if (ctx.sync === sync) sync.folderError = true;
@@ -666,17 +701,28 @@ async function flushFolders(ctx) {
   }
 }
 
+const folderSelection = (ctx, folder) => ({ id: 'upload-folder', scope: ctx.scope, folder });
+
+function selectUploadFolder(ctx, folder) {
+  ctx.uploadFolder = folder;
+  folderOptions($('upload-folder'), folderNames(ctx), folder);
+  storeRecords([folderSelection(ctx, folder)]).catch(storeError);
+}
+
+const folderRecord = (ctx, id, nombre) => ({ id, scope: ctx.scope, type: 'folder', nombre, pending: ctx.scope !== 'local' });
+const newFolderId = () => `f${crypto.randomUUID()}`;
+const folderWithName = (ctx, nombre) => [...folderNames(ctx)].find(([, name]) => name.toLocaleLowerCase('es-AR') === nombre.toLocaleLowerCase('es-AR'))?.[0];
+
 async function createFolder() {
   const ctx = workspace;
   if (!ctx || busy) return;
   const nombre = window.prompt('Nombre de la carpeta')?.trim();
   if (!nombre) return;
   if (nombre.length > 80) return jobMessage('Usá hasta 80 caracteres para el nombre de la carpeta.', true);
-  const current = [...folderNames(ctx)].find(([, name]) => name.toLocaleLowerCase('es-AR') === nombre.toLocaleLowerCase('es-AR'));
-  if (current) return jobMessage('Ya hay una carpeta con ese nombre.', true);
-  const folder = { id: `f${crypto.randomUUID()}`, scope: ctx.scope, type: 'folder', nombre, pending: ctx.scope !== 'local' };
+  if (folderWithName(ctx, nombre) !== undefined) return jobMessage('Ya hay una carpeta con ese nombre.', true);
+  const folder = folderRecord(ctx, newFolderId(), nombre);
   try {
-    await storeRecords([folder]);
+    await storeRecords([folder, folderSelection(ctx, folder.id)]);
     ctx.localFolders.set(folder.id, folder);
     ctx.uploadFolder = folder.id;
     if (workspace !== ctx) return;
@@ -686,6 +732,134 @@ async function createFolder() {
     jobMessage(`Carpeta «${nombre}» lista para agregar fotos.`);
     flushFolders(ctx);
   } catch { storeError(); }
+}
+
+function folderHeading(id, name) {
+  return `<span class="folder-heading"><span data-folder-title>${html(name)}</span>
+    <button type="button" class="small" data-folder-edit="${id}" aria-label="Editar nombre de ${html(name)}">Editar nombre</button></span>`;
+}
+
+function askFolderName(event) {
+  const button = event.target.closest('[data-folder-edit]');
+  const ctx = workspace;
+  if (!button || !ctx || busy) return;
+  event.preventDefault();
+  const id = button.dataset.folderEdit;
+  const name = folderNames(ctx).get(id);
+  if (!name) return;
+  folderEdit = { ctx, id, review: !!button.closest('#receipts') };
+  $('folder-name-title').textContent = id ? 'Editar nombre de la carpeta' : 'Poner nombre a «Sin carpeta»';
+  $('folder-name-info').hidden = !!id;
+  $('folder-name-info').textContent = 'Se moverán todas las fotos de este navegador y los remitos de esta sala que estén sin carpeta. Podés escribir el nombre de una carpeta existente.';
+  $('folder-name').value = id ? text(ctx.localFolders.get(id)?.nombre ?? ctx.folders[id]?.nombre) : '';
+  $('folder-name-error').hidden = true;
+  $('folder-name-dialog').showModal();
+  $('folder-name').select();
+}
+
+async function groupUnfiled(ctx, destination, records) {
+  const stored = await readRecords(ctx.scope);
+  const cloud = ctx.scope === 'local' ? stored.find(record => record.id === 'cloud')?.values : null;
+  const values = { ...ctx.receiptValues, ...cloud };
+  const unfiled = new Set(Object.entries(values).filter(([id, value]) => /^r[a-z0-9-]+$/i.test(id) && !validFolderId(value?.carpeta_id)
+    && (value?.version === 1 || (value?.transcripcion_eliminada && (value.photo !== false || ctx.local.get(id)?.source)))).map(([id]) => id));
+  const jobs = new Map();
+  for (const job of stored) {
+    if (job.type !== 'photo' || !(job.source || unfiled.has(job.id))) continue;
+    const receipt = values[job.id] || job.payload || job.receipt;
+    if (validFolderId(receipt ? receipt.carpeta_id : job.carpeta_id)) continue;
+    if (job.receipt) unfiled.add(job.id);
+    const updated = { ...job, carpeta_id: destination };
+    if (job.receipt) updated.receipt = { ...job.receipt, carpeta_id: destination };
+    if (job.payload) updated.payload = { ...job.payload, carpeta_id: destination };
+    jobs.set(job.id, updated);
+  }
+  const patches = [];
+  for (const id of unfiled) {
+    if (ctx.scope === 'local') {
+      if (values[id]) values[id] = { ...values[id], carpeta_id: destination };
+    } else patches.push({ id: 'patch-' + newId(), scope: ctx.scope, type: 'patch', onlyUnfiled: true,
+      fields: { [`${id}/carpeta_id`]: destination } });
+  }
+  const previous = new Map([...jobs.keys()].map(id => [id, ctx.local.get(id)]));
+  for (const [id, job] of jobs) ctx.local.set(id, job);
+  try {
+    if (ctx.scope === 'local') records.push({ id: 'cloud', scope: ctx.scope, values });
+    await storeRecords([...records, ...jobs.values(), ...patches, folderSelection(ctx, destination)]);
+    if (ctx.scope === 'local') ctx.values = values;
+    for (const patch of patches) ctx.patches.set(patch.id, patch);
+    ctx.uploadFolder = destination;
+  } catch (error) {
+    for (const [id, job] of previous) {
+      if (ctx.local.get(id) !== jobs.get(id)) continue;
+      if (job) ctx.local.set(id, job);
+      else ctx.local.delete(id);
+    }
+    throw error;
+  }
+}
+
+async function saveFolderName(event) {
+  event.preventDefault();
+  const { ctx, id, review } = folderEdit || {};
+  if (!ctx || workspace !== ctx || busy) return;
+  const save = $('save-folder-name');
+  const cancel = $('cancel-folder-name');
+  const errorBox = $('folder-name-error');
+  if (save.disabled) return;
+  const nombre = text($('folder-name').value);
+  const existing = folderWithName(ctx, nombre);
+  if (!nombre || (!id && existing === '') || (id && existing !== undefined && existing !== id)) {
+    errorBox.textContent = nombre ? 'Ya hay una carpeta con ese nombre.' : 'Escribí un nombre para la carpeta.';
+    errorBox.hidden = false;
+    return;
+  }
+  const destination = id || existing || newFolderId();
+  const folder = id || !existing ? folderRecord(ctx, destination, nombre) : null;
+  const previous = ctx.localFolders.get(destination);
+  save.disabled = cancel.disabled = true;
+  errorBox.hidden = true;
+  try {
+    const change = async () => {
+      if (id) ctx.localFolders.set(destination, folder);
+      try {
+        if (id) await storeRecords([folder]);
+        else {
+          await groupUnfiled(ctx, destination, folder ? [folder] : []);
+          if (folder) ctx.localFolders.set(destination, folder);
+        }
+      } catch (error) {
+        if (folder && ctx.localFolders.get(destination) === folder) {
+          if (previous) ctx.localFolders.set(destination, previous);
+          else ctx.localFolders.delete(destination);
+        }
+        throw error;
+      }
+    };
+    if (!id && navigator.locks) await navigator.locks.request(`control-remitos:${ctx.scope}`, { ifAvailable: true }, lock => {
+      if (!lock) throw new Error('Hay una tanda en curso en otra pestaña. Volvé a intentar cuando termine.');
+      return change();
+    });
+    else await change();
+    if (workspace !== ctx) return;
+    $('folder-name-dialog').close();
+    recalculate(ctx);
+    render();
+    if (review) {
+      reviewFolders.get(destination).open = true;
+      notice(`Carpeta «${folderNames(ctx).get(destination)}» guardada.`);
+    } else {
+      queueList(destination);
+      jobMessage(`Carpeta «${folderNames(ctx).get(destination)}» guardada.`);
+    }
+    flushFolders(ctx);
+    flush(ctx);
+  } catch (error) {
+    if (workspace === ctx) {
+      errorBox.textContent = error.message || 'No se pudo guardar el nombre de la carpeta.';
+      errorBox.hidden = false;
+    }
+  } finally { save.disabled = cancel.disabled = false; }
 }
 
 function updateControls() {
@@ -698,7 +872,8 @@ function updateControls() {
   $('choose-images').disabled = !ctx || busy;
   $('upload-folder').disabled = $('new-folder').disabled = !ctx || busy;
   $('process').disabled = !ctx || busy || !ctx.selectedPhotos.size;
-  for (const input of $('queue').querySelectorAll('[data-queue-select], [data-queue-remove], [data-queue-move], [data-queue-release]')) input.disabled = busy;
+  for (const input of $('queue').querySelectorAll('[data-queue-select], [data-queue-remove], [data-queue-move], [data-folder-edit], [data-folder-upload]')) input.disabled = busy;
+  for (const button of $('receipts').querySelectorAll('[data-folder-edit]')) button.disabled = busy;
   for (const button of $('receipts').querySelectorAll('[data-photo="move"], [data-photo="remove"], [data-action="remove-receipt"]')) button.disabled = busy;
   $('include-all').disabled = !ctx || !ctx.excel;
   $('include-all').checked = !!ctx?.includeAll;
@@ -727,7 +902,7 @@ function queueList(openFolder) {
     }
   }
   for (const job of [...jobs.values()].sort((a, b) => compareFileNames(a.name, b.name) || b.id.localeCompare(a.id))) {
-    const id = ctx.remote.get(job.id)?.carpeta_id ?? ctx.values[job.id]?.carpeta_id ?? job.carpeta_id;
+    const id = photoFolder(ctx, job.id);
     groups.get(folders.has(id) ? id : '').push(job);
   }
   folderOptions($('upload-folder'), folders, ctx.uploadFolder);
@@ -740,20 +915,19 @@ function queueList(openFolder) {
     const selectable = job.status !== 'done';
     const transcriptRemoved = ctx.values[job.id]?.transcripcion_eliminada;
     const canPreview = transcriptRemoved ? job.source || ctx.values[job.id].photo === true : ctx.remote.get(job.id)?.photo !== false;
-    const canRelease = ctx.scope !== 'local' && job.source && ctx.values[job.id]?.photo === true;
     const status = transcriptRemoved ? 'Sin transcripción' : 'Transcripta';
     const title = selectable ? `<label class="check queue-name"><input type="checkbox" data-queue-select="${job.id}" aria-label="Seleccionar ${name} para transcribir"> <strong>${name}</strong></label>`
       : `<span class="queue-name"><strong>${name}</strong> · ${status}</span>`;
     return `<li><div class="queue-item">${title}<div class="actions">
       ${canPreview ? `<button type="button" class="small" data-queue-preview="${job.id}" aria-label="Ver foto ${name}">Ver foto</button>` : ''}
       ${folders.size > 1 && !transcriptRemoved ? `<button type="button" class="small" data-queue-move="${job.id}" aria-label="Mover ${name}">Mover</button>` : ''}
-      ${canRelease ? `<button type="button" class="small" data-queue-release="${job.id}" aria-label="Liberar copia local de ${name}">Liberar copia local</button>` : ''}
       <button type="button" class="small remove-photo" data-queue-remove="${job.id}" aria-label="Eliminar foto ${name}">×</button></div></div>
       ${job.error ? `<p class="hint error">${html(job.error)}</p>` : ''}</li>`;
   };
   const markup = [...groups].filter(([id, group]) => id || group.length).map(([id, group]) =>
-    `<details class="folder" data-queue-folder="${id}"><summary>${html(folders.get(id))} · ${group.length} ${group.length === 1 ? 'foto' : 'fotos'}</summary>
-    ${group.length ? `<ul class="queue">${group.map(photoRow).join('')}</ul>` : ''}</details>`).join('');
+    `<details class="folder" data-queue-folder="${id}"><summary>${folderHeading(id, folders.get(id))}</summary>
+    ${group.length ? `<ul class="queue">${group.map(photoRow).join('')}</ul>` : ''}
+    <button type="button" class="small folder-upload" data-folder-upload="${id}" aria-label="Agregar fotos a ${html(folders.get(id))}">Agregar fotos acá</button></details>`).join('');
   const queue = $('queue');
   if (queue.dataset.markup !== markup) {
     const wasOpen = new Map([...queue.children].map(group => [group.dataset.queueFolder, group.open]));
@@ -761,6 +935,8 @@ function queueList(openFolder) {
     queue.innerHTML = markup;
     for (const group of queue.children) {
       const id = group.dataset.queueFolder;
+      const count = groups.get(id).length;
+      group.querySelector('[data-folder-title]').textContent = `${folders.get(id)} · ${count} ${count === 1 ? 'foto' : 'fotos'}`;
       group.open = wasOpen.get(id) ?? (id === ctx.uploadFolder || id === '');
     }
   }
@@ -768,7 +944,7 @@ function queueList(openFolder) {
   for (const input of queue.querySelectorAll('[data-queue-select]')) {
     input.checked = ctx.selectedPhotos.has(input.dataset.queueSelect);
   }
-  for (const input of queue.querySelectorAll('[data-queue-select], [data-queue-remove], [data-queue-move], [data-queue-release]')) input.disabled = busy;
+  for (const input of queue.querySelectorAll('[data-queue-select], [data-queue-remove], [data-queue-move], [data-folder-edit], [data-folder-upload]')) input.disabled = busy;
 }
 
 function selectQueuedPhoto(event) {
@@ -936,22 +1112,38 @@ function forgetPhoto(id) {
   photoUrls.delete(id);
 }
 
-function askRemovePhoto(id, localOnly = false) {
+function photoRemovalOptions(ctx, id) {
+  const job = ctx.local.get(id);
+  const photo = ctx.values[id]?.photo;
+  const sharing = ctx.scope !== 'local' && !!job?.source && job.status === 'done' && photo === undefined;
+  return { shared: photo === true, local: !!job?.source && !sharing, room: photo === true || sharing };
+}
+
+function setPhotoRemovalButtons(ctx, id, disabled = false) {
+  const options = photoRemovalOptions(ctx, id);
+  $('confirm-release-photo').disabled = disabled || !options.local;
+  $('confirm-remove-photo').disabled = disabled || !options.room;
+  $('cancel-remove-photo').disabled = disabled;
+}
+
+function askRemovePhoto(id) {
   const ctx = workspace;
+  if (!ctx || busy) return;
   const job = ctx?.local.get(id);
   const receipt = ctx?.remote.get(id);
   const saved = ctx?.values[id];
-  const shared = saved?.photo === true;
-  if ((!job?.source && receipt?.photo !== true && !shared) || busy) return;
-  if (localOnly && (!job?.source || !shared || ctx.scope === 'local')) return;
-  removal = { ctx, id, localOnly };
-  $('remove-photo-title').textContent = localOnly ? '¿Liberar la copia de este navegador?' : '¿Seguro que querés eliminar la foto?';
-  $('confirm-remove-photo').textContent = localOnly ? 'Liberar copia local' : 'Eliminar foto';
+  const options = photoRemovalOptions(ctx, id);
+  if (!options.local && !options.room) return;
+  removal = { ctx, id, shared: options.shared };
   $('remove-photo-name').textContent = job?.name || receipt?.nombre_archivo || saved?.nombre_archivo || 'Foto del remito';
-  $('remove-photo-info').textContent = localOnly ? 'La foto reducida seguirá disponible para todos en la sala.' : receipt
-    ? (ctx.scope === 'local' ? 'Se conserva la transcripción.' : 'Se quitará también la copia compartida. Se conserva la transcripción.')
-    : shared ? 'Se quitará la copia compartida de la sala.' : 'Se quitará de las fotos cargadas en este navegador.';
+  let info = 'La foto está guardada solo en este navegador.';
+  if (options.shared) info = options.local
+    ? 'Si elegís solo este navegador, los demás podrán seguir viendo la foto en la sala.'
+    : 'La foto está compartida en la sala. Este navegador no tiene una copia original guardada.';
+  else if (options.room) info = 'La copia compartida todavía se está guardando. Esperá a que esté disponible si querés conservarla.';
+  $('remove-photo-info').textContent = receipt ? `${info} La transcripción se conserva.` : info;
   $('remove-photo-error').hidden = true;
+  setPhotoRemovalButtons(ctx, id);
   $('remove-photo-dialog').showModal();
 }
 
@@ -1026,27 +1218,28 @@ async function confirmRemoveReceipt() {
   }
 }
 
-async function confirmRemovePhoto() {
-  const { ctx, id, localOnly } = removal || {};
+async function confirmRemovePhoto(localOnly) {
+  const { ctx, id, shared } = removal || {};
   if (!ctx || workspace !== ctx || busy || ctx.deletingPhotos.has(id)) return;
-  const button = $('confirm-remove-photo');
-  const cancel = $('cancel-remove-photo');
+  if (!shared && localOnly && !photoRemovalOptions(ctx, id).local) return;
   const errorBox = $('remove-photo-error');
   ctx.deletingPhotos.add(id);
-  button.disabled = cancel.disabled = true;
+  setPhotoRemovalButtons(ctx, id, true);
   errorBox.hidden = true;
   try {
     const remove = async () => {
       const job = await readRecords(ctx.scope, id);
       if (localOnly) {
-        const sync = ctx.sync;
-        const offline = 'Conectate a la sala para comprobar que la foto reducida está guardada.';
-        if (!updatesAllowed(ctx)) throw new Error(offline);
-        // La marca se guarda en la misma escritura de Firebase que la foto reducida.
-        const shared = await sync.ref.child(id).child('photo').once('value');
-        if (ctx.sync !== sync || !updatesAllowed(ctx)) throw new Error(offline);
-        if (shared.val() !== true || ctx.values[id]?.photo !== true) {
-          throw new Error('La copia compartida no está disponible. Se conservó la foto local.');
+        if (shared || (ctx.scope !== 'local' && job?.status === 'done' && ctx.values[id]?.photo !== false)) {
+          const sync = ctx.sync;
+          const offline = 'Conectate a la sala para comprobar que la foto reducida está guardada.';
+          if (!updatesAllowed(ctx)) throw new Error(offline);
+          // La marca se guarda en la misma escritura de Firebase que la foto reducida.
+          const savedPhoto = await sync.ref.child(id).child('photo').once('value');
+          if (ctx.sync !== sync || !updatesAllowed(ctx)) throw new Error(offline);
+          if (savedPhoto.val() !== true || ctx.values[id]?.photo !== true) {
+            throw new Error('La copia compartida no está disponible. Se conservó la foto local.');
+          }
         }
       } else {
         let saved = ctx.values[id];
@@ -1066,7 +1259,7 @@ async function confirmRemovePhoto() {
       if (job?.receipt) {
         // El trabajo también puede ser la única copia local de la transcripción.
         const stripped = { ...job, source: null, preview: null, removedFromQueue: true };
-        if (!localOnly) stripped.payload = { ...(job.payload || publicReceipt(job.receipt)), photo: false };
+        if (!localOnly || ctx.values[id]?.photo === false) stripped.payload = { ...(job.payload || publicReceipt(job.receipt)), photo: false };
         await storeRecords([stripped]);
         const local = ctx.local.get(id);
         if (local) Object.assign(local, stripped);
@@ -1085,7 +1278,7 @@ async function confirmRemovePhoto() {
     if (workspace === ctx) {
       forgetPhoto(id);
       $('remove-photo-dialog').close();
-      jobMessage(localOnly ? 'Copia local liberada. La foto reducida sigue disponible en la sala.' : 'Foto eliminada.');
+      jobMessage(localOnly && ctx.values[id]?.photo === true ? 'Copia local liberada. La foto reducida sigue disponible en la sala.' : 'Foto eliminada.');
     }
   } catch (error) {
     if (workspace === ctx) {
@@ -1093,9 +1286,9 @@ async function confirmRemovePhoto() {
       errorBox.hidden = false;
     }
   } finally {
-    button.disabled = cancel.disabled = false;
     ctx.deletingPhotos.delete(id);
     if (workspace === ctx) {
+      setPhotoRemovalButtons(ctx, id);
       recalculate(ctx);
       render();
       flush(ctx);
@@ -1193,20 +1386,28 @@ async function photoAction(event) {
   } finally { button.disabled = false; }
 }
 
-async function addPhotos(files) {
+function choosePhotos(folder) {
+  const ctx = workspace;
+  if (!ctx || busy) return;
+  if (folder !== undefined) selectUploadFolder(ctx, folder);
+  photoUpload = { ctx, folder: ctx.uploadFolder };
+  $('images').click();
+}
+
+async function addPhotos(files, folder = workspace?.uploadFolder) {
   const ctx = workspace;
   if (!ctx || !files.length) return;
   if (files.length > MAX_BATCH) return jobMessage('Seleccioná hasta 10 imágenes por tanda.', true);
   if (files.some(file => !/\.(jpe?g|png|hei[cf])$/i.test(file.name) && !/^image\/(jpeg|png|hei[cf])$/.test(file.type))) {
     return jobMessage('Elegí solo imágenes JPG, PNG o HEIC.', true);
   }
-  const folder = ctx.uploadFolder;
   const jobs = files.map(source => ({ id: newId(), scope: ctx.scope, type: 'photo', name: source.name, source, status: 'queued', carpeta_id: folder }));
   try {
     await storeRecords(jobs);
     for (const job of jobs) ctx.local.set(job.id, job);
     if (workspace !== ctx) return;
-    jobMessage('Marcá las fotos que querés transcribir.');
+    const name = folderNames(ctx).get(folder);
+    jobMessage(`${files.length} ${files.length === 1 ? 'foto cargada' : 'fotos cargadas'} en «${name}». Marcá las que querés transcribir.`);
     queueList(folder);
     $('queue-wrap').open = true;
     updateControls();
@@ -1435,7 +1636,7 @@ function renderPhoto(card, receipt, job) {
   if (!available) forgetPhoto(receipt.id);
   const url = photoUrls.get(receipt.id);
   card.querySelector('[data-photo="open"]').hidden = !available || !!url;
-  card.querySelector('[data-photo="remove"]').hidden = !available;
+  card.querySelector('[data-photo="remove"]').hidden = !available && !job?.source;
   card.querySelector('[data-photo-status]').textContent = cloud && receipt.photo === undefined && job?.source
     ? 'Compartiendo foto…' : available ? '' : 'Foto no disponible';
   card.querySelector('figure').hidden = card.querySelector('[data-photo-zoom]').hidden = !url;
@@ -1524,7 +1725,7 @@ function render() {
       group.className = 'folder';
       group.dataset.reviewFolder = id;
       group.open = true;
-      group.innerHTML = '<summary></summary><div class="folder-cards"></div><p class="hint folder-cards">Sin remitos transcritos</p>';
+      group.innerHTML = `<summary>${folderHeading(id, folders.get(id))}</summary><div class="folder-cards"></div><p class="hint folder-cards">Sin remitos transcritos</p>`;
       reviewFolders.set(id, group);
     }
     folderPositions.set(id, 0);
@@ -1542,7 +1743,7 @@ function render() {
       cards.set(receipt.id, entry);
     }
     const { card } = entry;
-    const folder = folders.has(receipt.carpeta_id) ? receipt.carpeta_id : '';
+    const folder = photoFolder(ctx, receipt.id);
     const group = reviewFolders.get(folder).querySelector('div');
     const position = folderPositions.get(folder);
     if (group.children[position] !== card) group.insertBefore(card, group.children[position] || null);
@@ -1599,7 +1800,8 @@ function render() {
     const count = folderPositions.get(id);
     const shown = visibleInFolder.get(id) || 0;
     group.hidden = id ? count > 0 && shown === 0 : shown === 0;
-    group.querySelector('summary').textContent = `${name} · ${shown} ${shown === 1 ? 'remito' : 'remitos'}`;
+    group.querySelector('[data-folder-title]').textContent = `${name} · ${shown} ${shown === 1 ? 'remito' : 'remitos'}`;
+    group.querySelector('[data-folder-edit]').setAttribute('aria-label', `Editar nombre de ${name}`);
     group.querySelector(':scope > p').hidden = count > 0;
     if (container.children[folderPosition] !== group) container.insertBefore(group, container.children[folderPosition] || null);
     folderPosition++;
@@ -1973,16 +2175,23 @@ $('share-keys').onchange = event => {
 $('choose-excel').onclick = () => $('excel-file').click();
 $('remove-excel').onclick = removeWorkbook;
 $('excel-file').onchange = event => { loadWorkbook(event.target.files[0]); event.target.value = ''; };
-$('choose-images').onclick = () => $('images').click();
-$('images').onchange = event => { addPhotos([...event.target.files]); event.target.value = ''; };
-$('upload-folder').onchange = event => { if (workspace) workspace.uploadFolder = event.target.value; };
+$('choose-images').onclick = () => choosePhotos();
+$('images').onchange = event => {
+  const target = photoUpload;
+  photoUpload = null;
+  if (!target || target.ctx === workspace) addPhotos([...event.target.files], target?.folder);
+  event.target.value = '';
+};
+$('images').addEventListener('cancel', () => { photoUpload = null; });
+$('upload-folder').onchange = event => { if (workspace) selectUploadFolder(workspace, event.target.value); };
 $('new-folder').onclick = createFolder;
 $('process').onclick = processPhotos;
 $('queue').addEventListener('change', selectQueuedPhoto);
 $('queue').addEventListener('click', event => {
   const button = event.target.closest('button');
-  if (button?.dataset.queueRemove) askRemovePhoto(button.dataset.queueRemove);
-  else if (button?.dataset.queueRelease) askRemovePhoto(button.dataset.queueRelease, true);
+  if (button?.hasAttribute('data-folder-edit')) askFolderName(event);
+  else if (button?.hasAttribute('data-folder-upload')) choosePhotos(button.dataset.folderUpload);
+  else if (button?.dataset.queueRemove) askRemovePhoto(button.dataset.queueRemove);
   else if (button?.dataset.queueMove) askMovePhoto(button.dataset.queueMove);
   else if (button?.dataset.queuePreview) previewQueuedPhoto(event);
 });
@@ -1996,9 +2205,10 @@ $('photo-preview').addEventListener('close', () => {
   if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
   previewUrl = null;
 });
-$('confirm-remove-photo').onclick = confirmRemovePhoto;
+$('confirm-release-photo').onclick = () => confirmRemovePhoto(true);
+$('confirm-remove-photo').onclick = () => confirmRemovePhoto(false);
 $('remove-photo-dialog').addEventListener('cancel', event => {
-  if ($('confirm-remove-photo').disabled) event.preventDefault();
+  if ($('cancel-remove-photo').disabled) event.preventDefault();
 });
 $('confirm-remove-receipt').onclick = confirmRemoveReceipt;
 $('remove-receipt-dialog').addEventListener('cancel', event => {
@@ -2007,6 +2217,11 @@ $('remove-receipt-dialog').addEventListener('cancel', event => {
 $('move-photo-form').onsubmit = event => {
   if (event.submitter?.formMethod !== 'dialog') movePhoto(event);
 };
+$('folder-name-form').onsubmit = saveFolderName;
+$('cancel-folder-name').onclick = () => $('folder-name-dialog').close();
+$('folder-name-dialog').addEventListener('cancel', event => {
+  if ($('save-folder-name').disabled) event.preventDefault();
+});
 $('sync-retry').onclick = () => { if (workspace) connect(workspace, parentConnection()); };
 $('include-all').onchange = event => {
   const ctx = workspace;
@@ -2021,6 +2236,7 @@ $('verified-filter').onchange = event => { localStorage.setItem(VERIFIED_FILTER,
 $('receipts').addEventListener('change', editReceipt);
 $('receipts').addEventListener('click', doLineAction);
 $('receipts').addEventListener('click', photoAction);
+$('receipts').addEventListener('click', askFolderName);
 $('receipts').addEventListener('focusout', event => { if (event.target.matches('[data-field]')) setTimeout(render, 0); });
 $('receipts').addEventListener('input', event => {
   if (event.target.type === 'range') zoomPhoto(event.target.closest('.photo-block').querySelector('figure'), event.target.value);

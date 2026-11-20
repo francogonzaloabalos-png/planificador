@@ -42,6 +42,9 @@
     .folders{display:grid;gap:6px;margin-top:8px}
     .folder{border:1px solid var(--line);border-radius:8px;min-width:0}
     .folder>summary{padding:7px 10px;overflow-wrap:anywhere}
+    .folder-heading{display:inline-flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;width:calc(100% - 1.3em);vertical-align:middle}
+    .folder>summary .small{min-height:29px}
+    .folder-upload{margin:0 8px 8px}
     .folder>ul,.folder-cards{margin:0 8px 8px}
     .folder-cards{display:grid;gap:8px}
     .remove-photo{color:var(--missing);font-size:1.05rem!important}
@@ -90,7 +93,7 @@
       td::before{content:attr(data-label);display:block;color:var(--soft);font-weight:650;font-size:.8rem;margin-bottom:2px}
     }
   </style>
-  <script type="module" src="control-remitos.js?v=copia-local"></script>
+  <script type="module" src="control-remitos.js?v=opciones-fotos-carpetas"></script>
 </head>
 <body>
   <main>
@@ -177,15 +180,26 @@
 
   <dialog id="remove-photo-dialog" class="photo-dialog" aria-labelledby="remove-photo-title">
     <div class="stack">
-      <h2 id="remove-photo-title">¿Seguro que querés eliminar la foto?</h2>
+      <h2 id="remove-photo-title">¿Dónde querés eliminar la foto?</h2>
       <p id="remove-photo-name"></p>
       <p class="hint" id="remove-photo-info"></p>
       <p class="hint error" id="remove-photo-error" role="status" hidden></p>
       <form class="actions" method="dialog">
         <button type="submit" id="cancel-remove-photo" autofocus>Cancelar</button>
-        <button type="button" id="confirm-remove-photo" class="primary">Eliminar foto</button>
+        <button type="button" id="confirm-release-photo">Solo en este navegador</button>
+        <button type="button" id="confirm-remove-photo" class="danger">Del navegador y de la sala</button>
       </form>
     </div>
+  </dialog>
+
+  <dialog id="folder-name-dialog" class="photo-dialog" aria-labelledby="folder-name-title">
+    <form id="folder-name-form" class="stack">
+      <h2 id="folder-name-title">Editar nombre de la carpeta</h2>
+      <p class="hint" id="folder-name-info" hidden></p>
+      <label class="field">Nombre de la carpeta <input id="folder-name" type="text" required maxlength="80" autofocus></label>
+      <p class="hint error" id="folder-name-error" role="status" hidden></p>
+      <div class="actions"><button type="button" id="cancel-folder-name">Cancelar</button><button type="submit" id="save-folder-name" class="primary">Guardar nombre</button></div>
+    </form>
   </dialog>
 
   <dialog id="move-photo-dialog" class="photo-dialog" aria-labelledby="move-photo-title">
