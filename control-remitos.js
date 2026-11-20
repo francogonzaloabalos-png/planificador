@@ -1,9 +1,9 @@
 import {
   headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
-  differences, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
-  receiveReceipt, exportRows, excelDay, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, materialSimilarity, productCategories
-} from './control-remitos-core.js?v=excel-rubros';
-import { buildRemitosExcel } from './control-remitos-export.js?v=excel-rubros';
+  compareRowFields, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
+  receiveReceipt, exportRows, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, productCategories
+} from './control-remitos-core.js?v=comparacion-campos';
+import { buildRemitosExcel } from './control-remitos-export.js?v=comparacion-campos';
 
 const $ = id => document.getElementById(id);
 const LEGACY_KEY = 'control_remitos_gemini_key_v1';
@@ -1601,19 +1601,25 @@ function similarityBadge(value) {
   return `<span class="similarity ${level}"><strong>${value}%</strong> similitud del material</span>`;
 }
 
-const matchingRemitoLabel = '<div class="matching-remito">Coincide el Nº de remito</div>';
+const comparisonLabels = {
+  match: 'Coincide', similar: 'Similar', different: 'No coincide', unavailable: 'Sin comparar'
+};
 
-function formatRow(row, result, { canChoose = false, assigned = false,
-  similarity = materialSimilarity(result.line.descripcion, row.herramienta) } = {}) {
-  const printable = { ...row, day: row.day ?? excelDay(row.fecha) };
-  const { warnings, sameRemito } = differences(result.receipt, result.line, result.date, printable);
-  return `<div class="row-detail"><b>Fila ${row.fila} · ${html(row.herramienta)}</b>
-    ${similarityBadge(similarity)}
-    <div>${html(row.fecha || 'Fecha vacía')} · ${html(row.persona || 'Persona vacía')} · ${html(row.obra || 'Obra vacía')}</div>
-    <div>Detalle: ${html(row.detalle || '—')} · Cantidad: ${html(row.cantidad || '—')}</div>
-    <div>MOVIMIENTO: ${html(row.movimiento || '—')} · Nº REMITO: ${html(row.remito || '—')}</div>
-    ${sameRemito ? matchingRemitoLabel : ''}
-    ${warnings.length ? `<div class="warning">${warnings.map(html).join(' · ')}</div>` : ''}
+function formatRow(row, result, { canChoose = false, assigned = false, suggested = false, similarity } = {}) {
+  const fields = compareRowFields(result, row, similarity);
+  const cells = fields.map(field => {
+    const score = field.similarity != null && field.status !== 'unavailable' ? ` · ${field.similarity}%` : '';
+    const days = field.days > 0 ? `${field.days} ${field.days === 1 ? 'día' : 'días'} de diferencia` : '';
+    return `<tr><th scope="row">${field.label}</th><td>${html(field.remito || '—')}</td>
+      <td>${html(field.excel || '—')}${field.detail ? `<small>${html(field.detail)}</small>` : ''}</td>
+      <td><span class="field-match ${field.status}">${comparisonLabels[field.status]}${score}</span>${days ? `<small>${days}</small>` : ''}</td></tr>`;
+  }).join('');
+  return `<div class="row-detail"><b>${suggested ? 'Mejor sugerencia · ' : ''}Fila ${row.fila}</b>
+    <table class="comparison-fields" aria-label="Comparación con la fila ${row.fila}">
+      <thead><tr><th scope="col">Dato</th><th scope="col">Remito</th><th scope="col">Excel</th><th scope="col">Resultado</th></tr></thead>
+      <tbody>${cells}</tbody>
+    </table>
+    ${row.movimiento ? `<div>Movimiento en Excel · ${html(row.movimiento)}</div>` : ''}
     ${assigned ? '<div class="warning">Fila ya asignada a otra línea.</div>' : ''}
     ${canChoose ? `<button type="button" class="small" data-pick="${row.fila}">Elegir fila ${row.fila}</button>` : ''}</div>`;
 }
@@ -1671,7 +1677,7 @@ function makeCard(receipt) {
       <figure class="pan-photo" tabindex="0" aria-label="Foto del remito" hidden><img alt="Foto del remito" draggable="false"></figure>
       <label class="check" data-photo-zoom hidden>Zoom <input type="range" min="100" max="400" step="25" value="100" aria-label="Zoom de la foto"></label>
     </div><div class="review">
-      ${receipt.lines.length ? `<div class="table-wrap"><table aria-label="Líneas del remito"><thead><tr><th>Fecha</th><th>Descripción</th><th>Cant.</th><th>Comparación</th></tr></thead>
+      ${receipt.lines.length ? `<div class="table-wrap"><table class="review-table" aria-label="Líneas del remito"><thead><tr><th>Fecha</th><th>Descripción</th><th>Cant.</th><th>Comparación</th></tr></thead>
       <tbody>${receipt.lines.map(line => lineMarkup(line, true)).join('')}</tbody></table></div>`
     : '<p class="empty">El remito no tiene líneas transcritas.</p>'}
       <div class="receipt-foot actions"><button type="button" class="small" data-action="add">Agregar línea</button>
@@ -1704,14 +1710,13 @@ function renderPhoto(card, receipt, job) {
 function renderStatus(cell, result) {
   const mark = result.line.verificado;
   const best = result.candidates?.[0];
-  const signature = JSON.stringify([result.state, result.chosen, result.decision, result.conflict, result.stale, result.date, result.line.cantidad,
-    result.line.descripcion, result.receipt.numero_remito, best, !!workspace.excel, mark]);
+  const signature = JSON.stringify([result.state, result.chosen, result.decision, result.conflict, result.stale, result.date, result.line.fecha_linea,
+    result.line.cantidad, result.line.descripcion, result.receipt.numero_remito, result.receipt.persona, result.receipt.obra_o_vehiculo,
+    best, !!workspace.excel, mark]);
   if (cell.dataset.signature === signature) return;
   cell.dataset.signature = signature;
   const chosen = result.chosen ? formatRow(result.chosen, result) : '';
-  const suggestion = !chosen && best ? `<div class="row-detail"><b>Mejor sugerencia · Fila ${best.row.fila} · ${html(best.row.herramienta)}</b>
-    <div>${similarityBadge(best.similarity)}</div>${best.sameRemito ? matchingRemitoLabel : ''}
-    ${best.assigned ? '<div class="warning">Fila ya asignada a otra línea.</div>' : ''}</div>` : '';
+  const suggestion = !chosen && best ? formatRow(best.row, result, { suggested: true, similarity: best.similarity, assigned: best.assigned }) : '';
   const noSuggestion = !chosen && !best && workspace.excel && result.decision !== 'absent' && ['missing', 'doubtful'].includes(result.state);
   const action = (id, label) => `<button type="button" class="small" data-action="${id}">${label}</button>`;
   const buttons = [];

@@ -1,4 +1,4 @@
-import { excelColumns, excelDay, productCategories, productLabel, suggestProductCategory } from './control-remitos-core.js?v=excel-rubros';
+import { excelColumns, excelDay, productCategories, productLabel, suggestProductCategory } from './control-remitos-core.js?v=comparacion-campos';
 
 const workbookNamespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const featureNamespace = 'http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag';

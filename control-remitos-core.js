@@ -291,19 +291,47 @@ function number(value) {
   return Number(original.replace(',', '.'));
 }
 
-export function differences(receipt, line, date, row) {
-  const warnings = [];
-  const days = date?.day != null && row.day != null ? Math.abs(date.day - row.day) : null;
-  if (days === null) warnings.push('Fecha de entrega o de Excel incompleta');
-  else if (days) warnings.push(`Fecha distinta (${days} ${days === 1 ? 'día' : 'días'})`);
+function rowDifferences(receipt, line, date, row) {
+  const excelDate = row.day ?? excelDay(row.fecha);
+  const days = date?.day != null && excelDate !== null ? Math.abs(date.day - excelDate) : null;
   const delivered = number(line.cantidad), recorded = number(row.cantidad);
-  const qtyDiffers = delivered !== null && delivered !== recorded;
-  if (qtyDiffers) warnings.push(`Cantidad distinta (${line.cantidad} / ${row.cantidad || 'vacía'})`);
   const printed = remitoNumber(receipt.numero_remito);
   const recordedNumber = row.remitoNumber ?? remitoNumber(row.remito);
-  const sameRemito = !!printed && printed === recordedNumber;
-  if (printed && !sameRemito) warnings.push(`Nº de remito distinto (${receipt.numero_remito} / ${row.remito || 'vacío'})`);
-  return { warnings, days, qtyDiffers, sameRemito };
+  return { days, delivered, recorded, printed, recordedNumber };
+}
+
+function fieldStatus(comparable, equal) {
+  return !comparable ? 'unavailable' : equal ? 'match' : 'different';
+}
+
+function contextStatus(left, right, unordered = false) {
+  if (missingText(left) || missingText(right)) return 'unavailable';
+  const key = value => {
+    const normalized = normalize(value);
+    return unordered ? normalized.split(' ').sort().join(' ') : normalized;
+  };
+  if (key(left) === key(right)) return 'match';
+  return contextMatches(left, right) ? 'similar' : 'different';
+}
+
+export function compareRowFields({ receipt, line, date }, row, similarity = materialSimilarity(line.descripcion, row.herramienta)) {
+  const { days, delivered, recorded, printed, recordedNumber } = rowDifferences(receipt, line, date, row);
+  const materialStatus = !missingText(line.descripcion) && !missingText(row.herramienta)
+    ? similarity === 100 ? 'match' : similarity >= 50 ? 'similar' : 'different'
+    : 'unavailable';
+  const work = receipt.obra_o_vehiculo;
+  const specificWork = !/^(HERRAMIENTAS? )?A CARGO$/.test(normalize(work));
+  return [
+    { label: 'Material', remito: line.descripcion, excel: row.herramienta, detail: row.detalle, status: materialStatus, similarity },
+    { label: 'Fecha de entrega', remito: date ? showDate(date) : line.fecha_linea, excel: row.fecha,
+      status: fieldStatus(days !== null, days === 0), days },
+    { label: 'Cantidad', remito: line.cantidad, excel: row.cantidad,
+      status: fieldStatus(delivered !== null && recorded !== null, delivered === recorded) },
+    { label: 'Nº de remito', remito: receipt.numero_remito, excel: row.remito,
+      status: fieldStatus(!!printed && !!recordedNumber, printed === recordedNumber) },
+    { label: 'Persona', remito: receipt.persona, excel: row.persona, status: contextStatus(receipt.persona, row.persona, true) },
+    { label: 'Obra / vehículo', remito: work, excel: row.obra, status: specificWork ? contextStatus(work, row.obra) : 'unavailable' }
+  ];
 }
 
 export function indexWorkbook(rows) {
@@ -350,7 +378,8 @@ function rank(receipt, line, date, excel) {
     if (contextDiffers && !sameRemito) continue;
     const similarity = toolScore(printed, row.words);
     if (similarity < minimumMaterialScore) continue;
-    const { days, qtyDiffers } = differences(receipt, line, date, row);
+    const { days, delivered, recorded } = rowDifferences(receipt, line, date, row);
+    const qtyDiffers = delivered !== null && delivered !== recorded;
     const detail = tokens(`${row.codigo} ${row.detalle}`).filter(word => !row.words.includes(word));
     const detailScore = detail.some(word => word.length >= 3 && printed.includes(word)) ? .06 : 0;
     const dateScore = days == null || days > 3 ? -.06 : .10 - days * .025;
