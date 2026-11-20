@@ -25,6 +25,7 @@ const newId = () => `r${Date.now().toString(36)}-${crypto.randomUUID()}`;
 const loadTime = new Intl.DateTimeFormat('es-AR', {
   timeZone: 'America/Argentina/Buenos_Aires', dateStyle: 'short', timeStyle: 'short', hour12: false
 });
+const fileNameOrder = new Intl.Collator('es-AR', { numeric: true, sensitivity: 'base' });
 
 let workspace;
 let roomGeneration = 0;
@@ -710,6 +711,11 @@ function updateControls() {
   renderKeys();
 }
 
+function compareFileNames(left, right) {
+  if (!left || !right) return Number(!left) - Number(!right);
+  return fileNameOrder.compare(left, right);
+}
+
 function queueList(openFolder) {
   const ctx = workspace;
   const folders = folderNames(ctx);
@@ -720,7 +726,7 @@ function queueList(openFolder) {
       jobs.set(id, { id, name: value.nombre_archivo || 'Foto del remito', status: 'done' });
     }
   }
-  for (const job of [...jobs.values()].sort((a, b) => b.id.localeCompare(a.id))) {
+  for (const job of [...jobs.values()].sort((a, b) => compareFileNames(a.name, b.name) || b.id.localeCompare(a.id))) {
     const id = ctx.remote.get(job.id)?.carpeta_id ?? ctx.values[job.id]?.carpeta_id ?? job.carpeta_id;
     groups.get(folders.has(id) ? id : '').push(job);
   }
@@ -1465,7 +1471,8 @@ function selectOptions(id, values, all) {
 function render() {
   const ctx = workspace;
   if (!ctx) return;
-  const receipts = receiptList();
+  const fileName = receipt => receipt.nombre_archivo || ctx.local.get(receipt.id)?.name;
+  const receipts = receiptList().sort((a, b) => compareFileNames(fileName(a), fileName(b)));
   const ids = new Set(receipts.map(receipt => receipt.id));
   for (const [id, entry] of cards) {
     if (!ids.has(id)) {
@@ -1513,8 +1520,8 @@ function render() {
     if (group.children[position] !== card) group.insertBefore(card, group.children[position] || null);
     folderPositions.set(folder, position + 1);
     const title = receipt.numero_remito ? `Remito ${receipt.numero_remito}` : 'Remito sin número';
-    const fileName = receipt.nombre_archivo || job?.name;
-    card.querySelector('[data-receipt-title]').textContent = fileName ? `${title} · ${fileName}` : title;
+    const photoName = fileName(receipt);
+    card.querySelector('[data-receipt-title]').textContent = photoName ? `${title} · ${photoName}` : title;
     renderFields(card.querySelector('.receipt-head'), receipt);
     renderPhoto(card, receipt, job);
     card.querySelector('[data-photo="move"]').hidden = folders.size === 1;
