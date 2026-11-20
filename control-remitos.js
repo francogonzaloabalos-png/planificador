@@ -698,7 +698,7 @@ function updateControls() {
   $('choose-images').disabled = !ctx || busy;
   $('upload-folder').disabled = $('new-folder').disabled = !ctx || busy;
   $('process').disabled = !ctx || busy || !ctx.selectedPhotos.size;
-  for (const input of $('queue').querySelectorAll('[data-queue-select], [data-queue-remove], [data-queue-move]')) input.disabled = busy;
+  for (const input of $('queue').querySelectorAll('[data-queue-select], [data-queue-remove], [data-queue-move], [data-queue-release]')) input.disabled = busy;
   for (const button of $('receipts').querySelectorAll('[data-photo="move"], [data-photo="remove"], [data-action="remove-receipt"]')) button.disabled = busy;
   $('include-all').disabled = !ctx || !ctx.excel;
   $('include-all').checked = !!ctx?.includeAll;
@@ -740,12 +740,14 @@ function queueList(openFolder) {
     const selectable = job.status !== 'done';
     const transcriptRemoved = ctx.values[job.id]?.transcripcion_eliminada;
     const canPreview = transcriptRemoved ? job.source || ctx.values[job.id].photo === true : ctx.remote.get(job.id)?.photo !== false;
+    const canRelease = ctx.scope !== 'local' && job.source && ctx.values[job.id]?.photo === true;
     const status = transcriptRemoved ? 'Sin transcripción' : 'Transcripta';
     const title = selectable ? `<label class="check queue-name"><input type="checkbox" data-queue-select="${job.id}" aria-label="Seleccionar ${name} para transcribir"> <strong>${name}</strong></label>`
       : `<span class="queue-name"><strong>${name}</strong> · ${status}</span>`;
     return `<li><div class="queue-item">${title}<div class="actions">
       ${canPreview ? `<button type="button" class="small" data-queue-preview="${job.id}" aria-label="Ver foto ${name}">Ver foto</button>` : ''}
       ${folders.size > 1 && !transcriptRemoved ? `<button type="button" class="small" data-queue-move="${job.id}" aria-label="Mover ${name}">Mover</button>` : ''}
+      ${canRelease ? `<button type="button" class="small" data-queue-release="${job.id}" aria-label="Liberar copia local de ${name}">Liberar copia local</button>` : ''}
       <button type="button" class="small remove-photo" data-queue-remove="${job.id}" aria-label="Eliminar foto ${name}">×</button></div></div>
       ${job.error ? `<p class="hint error">${html(job.error)}</p>` : ''}</li>`;
   };
@@ -766,7 +768,7 @@ function queueList(openFolder) {
   for (const input of queue.querySelectorAll('[data-queue-select]')) {
     input.checked = ctx.selectedPhotos.has(input.dataset.queueSelect);
   }
-  for (const input of queue.querySelectorAll('[data-queue-select], [data-queue-remove], [data-queue-move]')) input.disabled = busy;
+  for (const input of queue.querySelectorAll('[data-queue-select], [data-queue-remove], [data-queue-move], [data-queue-release]')) input.disabled = busy;
 }
 
 function selectQueuedPhoto(event) {
@@ -934,16 +936,19 @@ function forgetPhoto(id) {
   photoUrls.delete(id);
 }
 
-function askRemovePhoto(id) {
+function askRemovePhoto(id, localOnly = false) {
   const ctx = workspace;
   const job = ctx?.local.get(id);
   const receipt = ctx?.remote.get(id);
   const saved = ctx?.values[id];
   const shared = saved?.photo === true;
   if ((!job?.source && receipt?.photo !== true && !shared) || busy) return;
-  removal = { ctx, id };
+  if (localOnly && (!job?.source || !shared || ctx.scope === 'local')) return;
+  removal = { ctx, id, localOnly };
+  $('remove-photo-title').textContent = localOnly ? '¿Liberar la copia de este navegador?' : '¿Seguro que querés eliminar la foto?';
+  $('confirm-remove-photo').textContent = localOnly ? 'Liberar copia local' : 'Eliminar foto';
   $('remove-photo-name').textContent = job?.name || receipt?.nombre_archivo || saved?.nombre_archivo || 'Foto del remito';
-  $('remove-photo-info').textContent = receipt
+  $('remove-photo-info').textContent = localOnly ? 'La foto reducida seguirá disponible para todos en la sala.' : receipt
     ? (ctx.scope === 'local' ? 'Se conserva la transcripción.' : 'Se quitará también la copia compartida. Se conserva la transcripción.')
     : shared ? 'Se quitará la copia compartida de la sala.' : 'Se quitará de las fotos cargadas en este navegador.';
   $('remove-photo-error').hidden = true;
@@ -1022,7 +1027,7 @@ async function confirmRemoveReceipt() {
 }
 
 async function confirmRemovePhoto() {
-  const { ctx, id } = removal || {};
+  const { ctx, id, localOnly } = removal || {};
   if (!ctx || workspace !== ctx || busy || ctx.deletingPhotos.has(id)) return;
   const button = $('confirm-remove-photo');
   const cancel = $('cancel-remove-photo');
@@ -1033,23 +1038,35 @@ async function confirmRemovePhoto() {
   try {
     const remove = async () => {
       const job = await readRecords(ctx.scope, id);
-      let saved = ctx.values[id];
-      // Otra pestaña pudo publicar el remito después de que se abrió esta lista.
-      if (!saved && job?.receipt && updatesAllowed(ctx)) {
-        saved = (await ctx.sync.ref.child(id).once('value')).val();
-      }
-      if (job?.receipt && !job.pending && !saved && ctx.scope !== 'local' && !updatesAllowed(ctx)) {
-        throw new Error('Conectate a la sala para eliminar la foto compartida.');
-      }
-      if (ctx.scope !== 'local' && (saved?.version === 1 || saved?.transcripcion_eliminada) && saved.photo !== false) {
-        if (!updatesAllowed(ctx)) throw new Error('Conectate a la sala para eliminar la foto compartida.');
-        await ctx.sync.room.update({ [`imagenes/${id}`]: null, [`remitos/${id}/photo`]: false });
-        if (ctx.values[id]) ctx.values = withReceiptChanges(ctx.values, { [`${id}/photo`]: false });
+      if (localOnly) {
+        const sync = ctx.sync;
+        const offline = 'Conectate a la sala para comprobar que la foto reducida está guardada.';
+        if (!updatesAllowed(ctx)) throw new Error(offline);
+        // La marca se guarda en la misma escritura de Firebase que la foto reducida.
+        const shared = await sync.ref.child(id).child('photo').once('value');
+        if (ctx.sync !== sync || !updatesAllowed(ctx)) throw new Error(offline);
+        if (shared.val() !== true || ctx.values[id]?.photo !== true) {
+          throw new Error('La copia compartida no está disponible. Se conservó la foto local.');
+        }
+      } else {
+        let saved = ctx.values[id];
+        // Otra pestaña pudo publicar el remito después de que se abrió esta lista.
+        if (!saved && job?.receipt && updatesAllowed(ctx)) {
+          saved = (await ctx.sync.ref.child(id).once('value')).val();
+        }
+        if (job?.receipt && !job.pending && !saved && ctx.scope !== 'local' && !updatesAllowed(ctx)) {
+          throw new Error('Conectate a la sala para eliminar la foto compartida.');
+        }
+        if (ctx.scope !== 'local' && (saved?.version === 1 || saved?.transcripcion_eliminada) && saved.photo !== false) {
+          if (!updatesAllowed(ctx)) throw new Error('Conectate a la sala para eliminar la foto compartida.');
+          await ctx.sync.room.update({ [`imagenes/${id}`]: null, [`remitos/${id}/photo`]: false });
+          if (ctx.values[id]) ctx.values = withReceiptChanges(ctx.values, { [`${id}/photo`]: false });
+        }
       }
       if (job?.receipt) {
         // El trabajo también puede ser la única copia local de la transcripción.
-        const stripped = { ...job, source: null, preview: null, removedFromQueue: true,
-          payload: { ...(job.payload || publicReceipt(job.receipt)), photo: false } };
+        const stripped = { ...job, source: null, preview: null, removedFromQueue: true };
+        if (!localOnly) stripped.payload = { ...(job.payload || publicReceipt(job.receipt)), photo: false };
         await storeRecords([stripped]);
         const local = ctx.local.get(id);
         if (local) Object.assign(local, stripped);
@@ -1068,7 +1085,7 @@ async function confirmRemovePhoto() {
     if (workspace === ctx) {
       forgetPhoto(id);
       $('remove-photo-dialog').close();
-      jobMessage('Foto eliminada.');
+      jobMessage(localOnly ? 'Copia local liberada. La foto reducida sigue disponible en la sala.' : 'Foto eliminada.');
     }
   } catch (error) {
     if (workspace === ctx) {
@@ -1965,6 +1982,7 @@ $('queue').addEventListener('change', selectQueuedPhoto);
 $('queue').addEventListener('click', event => {
   const button = event.target.closest('button');
   if (button?.dataset.queueRemove) askRemovePhoto(button.dataset.queueRemove);
+  else if (button?.dataset.queueRelease) askRemovePhoto(button.dataset.queueRelease, true);
   else if (button?.dataset.queueMove) askMovePhoto(button.dataset.queueMove);
   else if (button?.dataset.queuePreview) previewQueuedPhoto(event);
 });
