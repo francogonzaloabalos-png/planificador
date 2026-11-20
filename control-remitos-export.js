@@ -1,4 +1,4 @@
-import { excelColumns, excelDay, isReturnMovement, normalize, productCategories, productLabel, suggestProductCategory } from './control-remitos-core.js?v=base-completa';
+import { excelColumns, excelDay, isReturnMovement, normalize, productCategories, productLabel, suggestProductCategory } from './control-remitos-core.js?v=movimiento-remito';
 
 const workbookNamespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const featureNamespace = 'http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag';
@@ -26,6 +26,7 @@ function buildBaseSheet(xlsx, workbook, base, comparisons) {
   const originalColumn = index => index === base.dateColumn ? 1 : index + (index < base.dateColumn ? 3 : 2);
   const headers = base.records.find(row => row.fila === 2)?.cells || {};
   const remitoKey = Object.keys(headers).find(key => /^(N|NRO) REMITO$/.test(normalize(headers[key].v)));
+  const movementKey = Object.keys(headers).find(key => normalize(headers[key].v) === excelColumns.movimiento);
   const returnColumn = remitoKey ? originalColumn(Number(remitoKey.slice(1))) + 1 : base.colCount + 2;
   const column = index => {
     const position = originalColumn(index);
@@ -56,8 +57,14 @@ function buildBaseSheet(xlsx, workbook, base, comparisons) {
       ? productLabel(result.line) : productCategories[suggestProductCategory(sourceRow.herramienta, sourceRow.detalle)];
     put(sheet, r, 0, { t: 'b', v: !!result?.line.verificado });
     put(sheet, r, 2, { t: 's', v: rubro });
-    if (isReturnMovement(sourceRow.movimiento) && result?.returnDay != null) {
-      put(sheet, r, returnColumn, excelDate(result.returnLabel, base.date1904));
+    const correction = result?.correccionExcel;
+    if (correction && movementKey) {
+      put(sheet, r, column(Number(movementKey.slice(1))), { t: 's', v: correction.movimiento });
+    }
+    const movement = correction?.movimiento ?? sourceRow.movimiento;
+    const returnDate = correction?.fecha_devolucion ?? (result?.returnDay != null ? result.returnLabel : '');
+    if (isReturnMovement(movement) && returnDate) {
+      put(sheet, r, returnColumn, excelDate(returnDate, base.date1904));
     }
   }
   put(sheet, 1, 0, { t: 's', v: 'Verificado con remito' });

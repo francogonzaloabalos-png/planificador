@@ -343,6 +343,16 @@ export function isReturnMovement(value) {
   return /^(?:DEVUELT[OA]S?|DEVOLUCION(?:ES)?)(?: |$)/.test(normalize(value));
 }
 
+export function excelCorrection(value) {
+  const fila = value?.fila;
+  const movimiento = text(value?.movimiento);
+  if (!Number.isInteger(fila) || fila < 3 || !movimiento) return null;
+  if (!isReturnMovement(movimiento)) return { fila, movimiento };
+  const fecha = text(value.fecha_devolucion);
+  return /^\d{4}-\d{2}-\d{2}$/.test(fecha) && excelDay(fecha) !== null
+    ? { fila, movimiento, fecha_devolucion: fecha } : null;
+}
+
 function markedReturn(line) {
   const date = normalize(line.fecha_devolucion);
   return line.devolucion_marcada || (date && !/^(SIN DATO|S N)$/.test(date)) || number(line.cantidad_devuelta) > 0;
@@ -355,15 +365,19 @@ function observationDates(row) {
   return matches.map(value => dateNear(value, anchor, anchor?.y)).filter(date => date?.day != null);
 }
 
-export function reviewReturn({ line, returnDay, returnLabel }, row) {
+export function reviewReturn({ line, returnDay, returnLabel, correccionExcel }, row) {
+  const correction = row && correccionExcel?.fila === row.fila ? correccionExcel : null;
+  const movement = correction?.movimiento ?? row?.movimiento;
   const inRemito = !!markedReturn(line);
-  const inExcel = isReturnMovement(row?.movimiento);
+  const inExcel = isReturnMovement(movement);
   if (!inRemito && !inExcel) return null;
-  const dates = inExcel || isReturnMovement(row?.observaciones) ? observationDates(row) : [];
+  const dates = correction?.fecha_devolucion ? [parseDate(correction.fecha_devolucion)]
+    : inExcel || isReturnMovement(row?.observaciones) ? observationDates(row) : [];
   const daysInExcel = new Set(dates.map(date => date.day));
   const excelDate = daysInExcel.size === 1 ? dates[0] : null;
   const days = returnDay != null && excelDate ? Math.abs(returnDay - excelDate.day) : null;
-  const observationDetail = daysInExcel.size > 1 ? 'Varias fechas en Observaciones'
+  const observationDetail = correction?.fecha_devolucion ? 'Corregida para exportar'
+    : daysInExcel.size > 1 ? 'Varias fechas en Observaciones'
     : excelDate ? 'En Observaciones' : inExcel ? 'Sin fecha en Observaciones' : '';
   return {
     needsDate: returnDay == null,
@@ -371,7 +385,7 @@ export function reviewReturn({ line, returnDay, returnLabel }, row) {
     dateMismatch: days > 0,
     movementWarning: !!row && inRemito && !inExcel,
     fields: [
-      { label: 'Movimiento', remito: inRemito ? 'Devolución' : 'Sin marca de devolución', excel: row?.movimiento,
+      { label: 'Movimiento', remito: inRemito ? 'Devolución' : 'Sin marca de devolución', excel: movement,
         status: fieldStatus(!!row && inRemito, inExcel) },
       { label: 'Fecha de devolución', remito: returnLabel, excel: excelDate ? showDate(excelDate) : '',
         detail: observationDetail, status: fieldStatus(days !== null, days === 0), days }
@@ -517,6 +531,7 @@ export function compareReceipts(local, remote, excel, includeAll) {
       else if (line.decision === 'absent') result.state = 'missing';
       else if (explicit && savedRow && !stale && !sharedRows.has(savedRow.fila) && !used.has(savedRow.fila)) {
         result.chosen = currentRow ? chosenRow(currentRow) : savedRow;
+        if (line.correccion_excel?.fila === savedRow.fila) result.correccionExcel = line.correccion_excel;
         result.state = 'ok';
         used.set(savedRow.fila, id);
       } else if (explicit) {
@@ -723,9 +738,10 @@ function verificationMark(value) {
 export function publicLine(line, order) {
   const fields = Object.fromEntries(Object.keys(lineFields).map(key => [key, lineBooleanFields.has(key) ? !!line[key] : text(line[key])]));
   const mark = verificationMark(line.verificado);
+  const correction = excelCorrection(line.correccion_excel);
   return { ...fields, order, estado: line.estado || 'pending', decision: line.decision || '',
     ...(line.comparar && { comparar: true }), ...(line.elegida && { elegida: chosenRow(line.elegida) }),
-    ...(mark && { verificado: mark }) };
+    ...(mark && { verificado: mark }), ...(correction && { correccion_excel: correction }) };
 }
 
 export function publicReceipt(receipt) {
@@ -747,7 +763,7 @@ export function receiveReceipt(id, value) {
         decision: Object.hasOwn(decisions, line?.decision) ? line.decision : '',
         estado: Object.hasOwn(states, line?.estado) ? line.estado : 'pending', elegida: chosenRow(line?.elegida),
         comparar: line.comparar === true,
-        verificado: verificationMark(line.verificado) };
+        verificado: verificationMark(line.verificado), correccion_excel: excelCorrection(line.correccion_excel) };
     }).sort((a, b) => a.order - b.order || a.key.localeCompare(b.key));
   return { id, ...header, nombre_archivo: text(value.nombre_archivo), carpeta_id: text(value.carpeta_id),
     photo: value.photo, lines: expandRepeatedMaterials(lines).map(line => ({

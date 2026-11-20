@@ -68,7 +68,8 @@
     #receipts{display:grid;gap:12px} #notice{margin-bottom:10px}
     .receipt-summary{overflow-wrap:anywhere} .receipt-summary .hint{display:block;margin-top:4px;font-weight:400}
     .receipt-layout{display:grid;grid-template-columns:minmax(175px,28%) minmax(0,1fr);gap:15px;align-items:start}
-    .photo-block{display:grid;gap:6px;min-width:0} .photo-block figure{max-height:540px;overflow:auto;margin:0;background:#ebf0eb;border:1px solid var(--line);border-radius:8px}
+    .photo-block{position:sticky;top:12px;display:grid;gap:6px;min-width:0}
+    .photo-block figure{max-height:min(540px,calc(100dvh - 124px));overflow:auto;margin:0;background:#ebf0eb;border:1px solid var(--line);border-radius:8px}
     .photo-block img{display:block;width:100%;height:auto} .photo-block input{width:min(120px,100%)}
     .review{min-width:0} .table-wrap{overflow:auto} table{width:100%;border-collapse:collapse;text-align:left;font-size:.9rem}
     th,td{text-align:left;padding:7px;vertical-align:top;border-bottom:1px solid var(--line)}
@@ -94,6 +95,7 @@
     .field-match.different{background:#fbe9ed;color:#8e2030}
     .return-date{color:var(--accent);font-weight:700}
     .return-alert{margin:5px 0;padding:5px 8px;border-left:3px solid #bf8c40;background:#fff4dc;color:var(--doubt);font-size:.86rem}
+    .row-detail .movement-correction{color:var(--accent);font-weight:650}
     .similarity{display:inline-block;margin:3px 0 5px;padding:3px 8px;border-radius:6px;color:#8e2030;background:#fbe9ed;font-size:.86rem;font-weight:650}
     .similarity.mid{color:#784500;background:#fff1cf}
     .similarity.high{color:#14543a;background:#e1f4e9}
@@ -110,7 +112,7 @@
     .candidates .row-detail{margin:0} .candidates button{margin-top:5px}
     @media(max-width:930px){.receipt-layout{grid-template-columns:minmax(125px,23%) minmax(0,1fr)}.receipt-head{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @media(max-width:720px){
-      .controls,.receipt-layout{grid-template-columns:minmax(0,1fr)} .photo-block figure{max-height:360px} .photo-block{max-width:460px;width:100%;margin:auto}
+      .controls,.receipt-layout{grid-template-columns:minmax(0,1fr)} .photo-block figure{max-height:360px} .photo-block{position:static;max-width:460px;width:100%;margin:auto}
       .stats{grid-template-columns:repeat(2,minmax(0,1fr))} .toolbar{align-items:flex-start} .filters{column-gap:12px}
     }
     @media(max-width:540px){
@@ -123,7 +125,7 @@
       .review-table > tbody > tr > td::before{content:attr(data-label);display:block;color:var(--soft);font-weight:650;font-size:.8rem;margin-bottom:2px}
     }
   </style>
-  <script type="module" src="control-remitos.js?v=base-completa"></script>
+  <script type="module" src="control-remitos.js?v=movimiento-remito"></script>
 </head>
 <body>
   <main>
@@ -215,6 +217,23 @@
         <button type="button" id="cancel-verify">Cancelar</button>
         <button type="button" id="verify-date-only">Solo fecha</button>
         <button type="submit" id="verify-with-name" class="primary">Verificar con nombre</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="movement-dialog" class="photo-dialog" aria-labelledby="movement-title">
+    <form id="movement-form" class="stack">
+      <h2 id="movement-title">Corregir movimiento en Excel</h2>
+      <p id="movement-row" class="hint"></p>
+      <p id="movement-original" class="hint"></p>
+      <label class="field">Movimiento para exportar <select id="movement-value" required autofocus></select></label>
+      <label class="field" id="movement-date-field" hidden>Fecha de devolución <input id="movement-date" type="date"></label>
+      <p class="hint">La corrección se aplica al XLSX exportado.</p>
+      <p id="movement-error" class="hint error" role="status" hidden></p>
+      <div class="actions">
+        <button type="button" id="cancel-movement">Cancelar</button>
+        <button type="button" id="restore-movement" hidden>Restaurar original</button>
+        <button type="submit" id="save-movement" class="primary">Guardar corrección</button>
       </div>
     </form>
   </dialog>

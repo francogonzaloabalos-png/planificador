@@ -1,9 +1,10 @@
 import {
   headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
   compareRowFields, reviewReturn, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
-  receiveReceipt, exportRows, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, productCategories
-} from './control-remitos-core.js?v=base-completa';
-import { buildRemitosExcel } from './control-remitos-export.js?v=base-completa';
+  receiveReceipt, exportRows, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, productCategories,
+  excelCorrection, isReturnMovement
+} from './control-remitos-core.js?v=movimiento-remito';
+import { buildRemitosExcel } from './control-remitos-export.js?v=movimiento-remito';
 
 const $ = id => document.getElementById(id);
 const LEGACY_KEY = 'control_remitos_gemini_key_v1';
@@ -43,6 +44,7 @@ let move;
 let folderEdit;
 let photoUpload;
 let verification;
+let movementEdit;
 let previewUrl;
 let previewTicket = 0;
 const libraries = new Map();
@@ -149,7 +151,7 @@ async function refreshRoom() {
   excelFeedback('');
   if ($('chooser').open) $('chooser').close();
   if ($('photo-preview').open) $('photo-preview').close();
-  for (const id of ['remove-photo-dialog', 'move-photo-dialog', 'remove-receipt-dialog', 'folder-name-dialog', 'verify-dialog']) if ($(id).open) $(id).close();
+  for (const id of ['remove-photo-dialog', 'move-photo-dialog', 'remove-receipt-dialog', 'folder-name-dialog', 'verify-dialog', 'movement-dialog']) if ($(id).open) $(id).close();
   for (const [id] of photoUrls) forgetPhoto(id);
   photoUrls.clear();
   cards.clear();
@@ -1612,6 +1614,8 @@ const comparisonLabels = {
 
 function formatRow(row, result, { canChoose = false, assigned = false, suggested = false, similarity,
   returnReview = reviewReturn(result, row) } = {}) {
+  const correction = result.correccionExcel?.fila === row.fila ? result.correccionExcel : null;
+  const movement = correction?.movimiento ?? row.movimiento;
   const fields = compareRowFields(result, row, similarity);
   if (returnReview) fields.push(...returnReview.fields);
   const cells = fields.map(field => {
@@ -1626,7 +1630,8 @@ function formatRow(row, result, { canChoose = false, assigned = false, suggested
       <thead><tr><th scope="col">Dato</th><th scope="col">Remito</th><th scope="col">Excel</th><th scope="col">Resultado</th></tr></thead>
       <tbody>${cells}</tbody>
     </table>
-    ${!returnReview && row.movimiento ? `<div>Movimiento en Excel · ${html(row.movimiento)}</div>` : ''}
+    ${!returnReview && movement ? `<div>Movimiento en Excel · ${html(movement)}</div>` : ''}
+    ${correction ? `<div class="movement-correction">Corregido para exportar · Original ${html(row.movimiento || 'sin movimiento')}</div>` : ''}
     ${canChoose && returnReview?.movementWarning ? '<div class="warning">Posible error de movimiento entre el remito y el Excel.</div>' : ''}
     ${assigned ? '<div class="warning">Fila ya asignada a otra línea.</div>' : ''}
     ${canChoose ? `<button type="button" class="small" data-pick="${row.fila}">Elegir fila ${row.fila}</button>` : ''}</div>`;
@@ -1721,7 +1726,7 @@ function renderStatus(cell, result, returnReview) {
   const best = result.candidates?.[0];
   const signature = JSON.stringify([result.state, result.chosen, result.decision, result.conflict, result.stale, result.date, result.line.fecha_linea,
     result.line.cantidad, result.line.descripcion, result.receipt.numero_remito, result.receipt.persona, result.receipt.obra_o_vehiculo,
-    best, !!workspace.excel, mark, returnReview]);
+    best, !!workspace.excel, mark, returnReview, result.correccionExcel]);
   if (cell.dataset.signature === signature) return;
   cell.dataset.signature = signature;
   const chosen = result.chosen ? formatRow(result.chosen, result, { returnReview }) : '';
@@ -1734,6 +1739,7 @@ function renderStatus(cell, result, returnReview) {
   else if (returnReview?.missingExcelDate) buttons.push(action('return-date', 'Revisar fecha de devolución'));
   if (result.state !== 'skipped') {
     if (result.chosen && !result.decision) buttons.push(action('confirm', 'Confirmar'));
+    if (workspace.excel && result.chosen) buttons.push(action('excel-movement', 'Corregir movimiento'));
     if (workspace.excel) buttons.push(action('choose', result.chosen ? 'Elegir otra fila' : result.candidates?.length ? 'Ver candidatos' : 'Buscar en Excel'));
     if (result.decision !== 'absent') buttons.push(action('absent', 'No está en el Excel'));
     if (result.decision) buttons.push(action('undo', 'Reabrir'));
@@ -1961,6 +1967,65 @@ function changeLine(receipt, key, fields, ctx = workspace) {
   return changeReceipt(Object.fromEntries(Object.entries(fields).map(([field, value]) => [path + '/' + field, value])), ctx);
 }
 
+function updateMovementDate() {
+  const isReturn = isReturnMovement($('movement-value').value);
+  $('movement-date-field').hidden = !isReturn;
+  $('movement-date').required = isReturn;
+}
+
+function openMovement(receipt, result) {
+  const row = result.chosen;
+  if (!workspace.excel || !row) return;
+  const correction = result.correccionExcel ?? null;
+  movementEdit = { ctx: workspace, id: receipt.id, key: result.line.key, row, correction };
+  $('movement-row').textContent = `Fila ${row.fila} · ${row.herramienta}`;
+  $('movement-original').textContent = `Movimiento original · ${row.movimiento || 'Sin movimiento'}`;
+  const values = new Set(['A CARGO', 'DEVUELTO', 'PARA OBRA', 'ENTREGADO', 'REPARACIÓN', 'PARA SERVICIO', 'BAJA', 'CANCELADO',
+    row.movimiento, correction?.movimiento].filter(Boolean));
+  const select = $('movement-value');
+  select.replaceChildren(new Option('Elegí un movimiento', ''), ...[...values].map(value => new Option(value, value)));
+  select.value = correction?.movimiento ?? row.movimiento ?? '';
+  $('movement-date').value = correction?.fecha_devolucion
+    ?? (result.returnDay == null ? '' : new Date(result.returnDay * 86400000).toISOString().slice(0, 10));
+  $('restore-movement').hidden = !correction;
+  $('movement-error').hidden = true;
+  updateMovementDate();
+  $('movement-dialog').showModal();
+}
+
+async function saveMovement(restore = false) {
+  const edit = movementEdit;
+  if (!edit || workspace !== edit.ctx || $('save-movement').disabled) return;
+  const { ctx, id, key, row } = edit;
+  const error = $('movement-error');
+  const fail = message => { error.textContent = message; error.hidden = false; };
+  const receipt = ctx.remote.get(id);
+  const index = receipt?.lines.findIndex(line => line.key === key) ?? -1;
+  const result = index < 0 ? null : resultFor(receipt, index);
+  if (!ctx.excel || !same(result?.chosen, row) || !same(result.correccionExcel ?? null, edit.correction)) {
+    fail('La fila o su corrección cambió. Cerrá el editor y volvé a abrirlo.');
+    return;
+  }
+  const correction = restore ? null : excelCorrection({
+    fila: row.fila, movimiento: $('movement-value').value, fecha_devolucion: $('movement-date').value
+  });
+  if (!restore && !correction) {
+    fail('Elegí un movimiento e ingresá una fecha válida si es una devolución.');
+    return;
+  }
+  const controls = ['save-movement', 'restore-movement', 'cancel-movement', 'movement-value', 'movement-date'].map($);
+  for (const control of controls) control.disabled = true;
+  error.hidden = true;
+  try {
+    const fields = { correccion_excel: correction };
+    if (!result.decision) Object.assign(fields, { decision: 'confirmed', elegida: row, estado: 'ok' });
+    if (!await changeLine(receipt, key, fields, ctx)) fail('No se pudo guardar la corrección. Volvé a intentar.');
+    else if (movementEdit === edit) $('movement-dialog').close();
+  } finally {
+    for (const control of controls) control.disabled = false;
+  }
+}
+
 function openVerification(receipt, line) {
   verification = { ctx: workspace, id: receipt.id, key: line.key };
   $('verify-line').textContent = line.descripcion || 'Línea sin descripción';
@@ -2062,20 +2127,22 @@ async function doLineAction(event) {
   }
   if (action === 'choose') { openChooser(receipt, key); return; }
   const result = resultFor(receipt, index);
+  if (action === 'excel-movement') { openMovement(receipt, result); return; }
   if (action === 'recompare' && workspace.excel) {
     const line = result.line;
     const fields = {};
     if (!line.comparar) fields.comparar = true;
     if (line.decision) fields.decision = '';
     if (line.elegida) fields.elegida = null;
+    if (line.correccion_excel) fields.correccion_excel = null;
     if (line.estado !== 'pending') fields.estado = 'pending';
     if (Object.keys(fields).length) await changeLine(receipt, key, fields);
     else { recalculate(workspace); render(); }
     return;
   }
   if (action === 'confirm' && result.chosen) changeLine(receipt, key, { decision: 'confirmed', elegida: result.chosen, estado: 'ok' });
-  if (action === 'absent') changeLine(receipt, key, { decision: 'absent', elegida: null, estado: 'missing' });
-  if (action === 'undo') changeLine(receipt, key, { decision: '', elegida: null, estado: 'pending' });
+  if (action === 'absent') changeLine(receipt, key, { decision: 'absent', elegida: null, estado: 'missing', correccion_excel: null });
+  if (action === 'undo') changeLine(receipt, key, { decision: '', elegida: null, estado: 'pending', correccion_excel: null });
 }
 
 function openChooser(receipt, key) {
@@ -2126,7 +2193,8 @@ function chooseRow(event) {
     return notice('Esa fila acaba de asignarse a otra línea. Elegí una fila disponible.', true);
   }
   $('chooser').close();
-  changeLine(receipt, result.line.key, { decision: 'manual', elegida: chosenRow(row), estado: 'ok' });
+  changeLine(receipt, result.line.key, { decision: 'manual', elegida: chosenRow(row), estado: 'ok',
+    ...(result.correccionExcel?.fila !== number && { correccion_excel: null }) });
 }
 
 function useWorkbook(ctx, workbook) {
@@ -2449,6 +2517,14 @@ $('verify-dialog').addEventListener('cancel', event => {
   if ($('verify-with-name').disabled) event.preventDefault();
 });
 $('verify-dialog').addEventListener('close', () => { if (!$('verify-dialog').open) verification = null; });
+$('movement-value').onchange = updateMovementDate;
+$('movement-form').onsubmit = event => { event.preventDefault(); saveMovement(); };
+$('restore-movement').onclick = () => saveMovement(true);
+$('cancel-movement').onclick = () => $('movement-dialog').close();
+$('movement-dialog').addEventListener('cancel', event => {
+  if ($('save-movement').disabled) event.preventDefault();
+});
+$('movement-dialog').addEventListener('close', () => { if (!$('movement-dialog').open) movementEdit = null; });
 $('sync-retry').onclick = () => { if (workspace) connect(workspace, parentConnection()); };
 $('include-all').onchange = event => {
   const ctx = workspace;
