@@ -15,6 +15,7 @@
     button,input:not([type=checkbox],[type=range]),select,textarea{border:1px solid var(--line);border-radius:7px;background:var(--paper);padding:8px 10px;min-width:0}
     button{font-weight:650;cursor:pointer;min-height:38px} button:hover:not(:disabled){border-color:var(--accent);background:#e9f3ee}
     button.primary{border-color:var(--accent);background:var(--accent);color:white} button.primary:hover:not(:disabled){background:#184939}
+    button.danger{color:var(--missing)} button.danger:hover:not(:disabled){border-color:var(--missing);background:#fbedef}
     button:disabled{opacity:.45;cursor:default} button.small{padding:5px 8px;min-height:32px;font-size:.84rem}
     :focus-visible{outline:2px solid #398668;outline-offset:2px} input[type=checkbox],input[type=range],progress{accent-color:var(--accent)}
     textarea{width:100%;resize:vertical;min-height:62px} progress{width:100%;height:11px}
@@ -84,7 +85,7 @@
       td::before{content:attr(data-label);display:block;color:var(--soft);font-weight:650;font-size:.8rem;margin-bottom:2px}
     }
   </style>
-  <script type="module" src="control-remitos.js?v=carpetas-fotos"></script>
+  <script type="module" src="control-remitos.js?v=eliminar-transcripcion"></script>
 </head>
 <body>
   <main>
@@ -189,6 +190,19 @@
       <p class="hint error" id="move-photo-error" role="status" hidden></p>
       <div class="actions"><button type="submit" formmethod="dialog">Cancelar</button><button type="submit" id="confirm-move-photo" class="primary">Mover foto</button></div>
     </form>
+  </dialog>
+
+  <dialog id="remove-receipt-dialog" class="photo-dialog" aria-labelledby="remove-receipt-title">
+    <div class="stack">
+      <h2 id="remove-receipt-title">¿Seguro que querés eliminar la transcripción?</h2>
+      <p id="remove-receipt-name"></p>
+      <p class="hint" id="remove-receipt-info"></p>
+      <p class="hint error" id="remove-receipt-error" role="status" hidden></p>
+      <form class="actions" method="dialog">
+        <button type="submit" id="cancel-remove-receipt" autofocus>Cancelar</button>
+        <button type="button" id="confirm-remove-receipt" class="danger">Eliminar transcripción</button>
+      </form>
+    </div>
   </dialog>
 
   <dialog id="chooser" aria-labelledby="chooser-title">
