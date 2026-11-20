@@ -1,10 +1,11 @@
-import { excelColumns, excelDay, productCategories, productLabel, suggestProductCategory } from './control-remitos-core.js?v=comparacion-campos';
+import { excelColumns, excelDay, isReturnMovement, normalize, productCategories, productLabel, suggestProductCategory } from './control-remitos-core.js?v=devoluciones';
 
 const workbookNamespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const featureNamespace = 'http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag';
 const featureFile = 'xl/featurePropertyBag/featurePropertyBag.xml';
 const utf8 = new TextEncoder();
 const dateFormat = 'dd/mm/yy';
+const returnDateHeader = 'Fecha de devolución';
 
 function excelDate(value, date1904) {
   const day = excelDay(value);
@@ -15,6 +16,7 @@ function excelDate(value, date1904) {
 function baseCopy(workbook) {
   if (workbook?.base) return workbook.base;
   const columns = Object.entries(excelColumns);
+  if (workbook?.rows.some(row => row.observaciones)) columns.push(['observaciones', 'OBSERVACIONES']);
   const records = [
     { fila: 1, cells: { c0: { v: workbook ? 'BASE DE DATOS · Volvé a cargar el Excel para copiar todas sus columnas' : 'BASE DE DATOS' } } },
     { fila: 2, cells: Object.fromEntries(columns.map(([, label], column) => ['c' + column, { v: label }])) }
@@ -25,10 +27,17 @@ function baseCopy(workbook) {
 }
 
 function buildBaseSheet(xlsx, workbook, base, comparisons) {
-  const column = index => index === base.dateColumn ? 1 : index + (index < base.dateColumn ? 3 : 2);
+  const originalColumn = index => index === base.dateColumn ? 1 : index + (index < base.dateColumn ? 3 : 2);
+  const headers = base.records.find(row => row.fila === 2)?.cells || {};
+  const remitoKey = Object.keys(headers).find(key => /^(N|NRO) REMITO$/.test(normalize(headers[key].v)));
+  const returnColumn = remitoKey ? originalColumn(Number(remitoKey.slice(1))) + 1 : base.colCount + 2;
+  const column = index => {
+    const position = originalColumn(index);
+    return position < returnColumn ? position : position + 1;
+  };
   const put = (sheet, r, c, value) => { sheet[xlsx.utils.encode_cell({ r, c })] = value; };
   const lastRow = base.records.reduce((row, record) => Math.max(row, record.fila), 2);
-  const width = base.colCount + 2;
+  const width = base.colCount + 3;
   const sheet = { '!ref': xlsx.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastRow - 1, c: width - 1 } }) };
   const matched = new Map();
   for (const result of comparisons.values()) {
@@ -51,14 +60,19 @@ function buildBaseSheet(xlsx, workbook, base, comparisons) {
       ? productLabel(result.line) : productCategories[suggestProductCategory(sourceRow.herramienta, sourceRow.detalle)];
     put(sheet, r, 0, { t: 'b', v: !!result?.line.verificado });
     put(sheet, r, 2, { t: 's', v: rubro });
+    if (isReturnMovement(sourceRow.movimiento) && result?.returnDay != null) {
+      put(sheet, r, returnColumn, excelDate(result.returnLabel, base.date1904));
+    }
   }
   put(sheet, 1, 0, { t: 's', v: 'Verificado con remito' });
   put(sheet, 1, 2, { t: 's', v: 'Rubro sugerido' });
+  put(sheet, 1, returnColumn, { t: 's', v: returnDateHeader });
   const fallbackWidths = [13, 14, 34, 17, 15, 12, 22, 20, 17, 16, 18, 14, 32, 13, 20, 17, 30];
   const cols = [{ wch: 24 }, { wch: 13 }, { wch: 31 }];
   for (let index = 0; index < base.colCount; index++) {
     if (index !== base.dateColumn) cols[column(index)] = { wch: Math.max(12, base.widths?.[index] || fallbackWidths[index] || 14) };
   }
+  cols[returnColumn] = { wch: 22 };
   sheet['!cols'] = cols;
   const merges = (base.merges || []).filter(({ start, end }) => start >= 0 && end > start && end < base.colCount
     && (base.dateColumn === 0 || base.dateColumn < start || base.dateColumn > end));
@@ -199,11 +213,12 @@ export function buildRemitosExcel(xlsx, rows, workbook, comparisons) {
   const base = baseCopy(workbook);
   const book = xlsx.utils.book_new();
   if (base.date1904) book.Workbook = { WBProps: { date1904: true } };
+  const returnColumn = rows[0].indexOf(returnDateHeader);
   const sheet = xlsx.utils.aoa_to_sheet([['Control de remitos'], ...rows.map((row, index) =>
     index === 0 ? row : row.map((value, column) => column === 0 ? { t: 's', v: value, z: '@' }
-      : column === 3 ? excelDate(value, base.date1904) : value))]);
-  sheet['!cols'] = [14, 24, 24, 15, 48, 14, 24, 14, 23, 31].map(wch => ({ wch }));
-  sheet['!autofilter'] = { ref: `A2:J${rows.length + 1}` };
+      : column === 3 || column === returnColumn ? excelDate(value, base.date1904) : value))]);
+  sheet['!cols'] = [14, 24, 24, 15, 48, 14, 24, 14, 23, 31, 22].map(wch => ({ wch }));
+  sheet['!autofilter'] = { ref: `A2:${xlsx.utils.encode_col(rows[0].length - 1)}${rows.length + 1}` };
   xlsx.utils.book_append_sheet(book, sheet, 'Control de remitos');
   const copy = buildBaseSheet(xlsx, workbook, base, comparisons);
   xlsx.utils.book_append_sheet(book, copy.sheet, 'BASE DE DATOS');

@@ -1,9 +1,9 @@
 import {
   headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
-  compareRowFields, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
+  compareRowFields, reviewReturn, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
   receiveReceipt, exportRows, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, productCategories
-} from './control-remitos-core.js?v=comparacion-campos';
-import { buildRemitosExcel } from './control-remitos-export.js?v=comparacion-campos';
+} from './control-remitos-core.js?v=devoluciones';
+import { buildRemitosExcel } from './control-remitos-export.js?v=devoluciones';
 
 const $ = id => document.getElementById(id);
 const LEGACY_KEY = 'control_remitos_gemini_key_v1';
@@ -175,7 +175,7 @@ async function refreshRoom() {
     const folders = records.find(record => record.id === 'folders-cloud')?.values || {};
     const localFolders = new Map(records.filter(record => record.type === 'folder').map(folder => [folder.id, folder]));
     workspace = {
-      scope, workbook, excel: workbook ? indexWorkbook(workbook.rows) : null, local, selectedPhotos: new Set(),
+      scope, workbook, excel: workbook ? indexWorkbook(workbook.rows, workbook.base) : null, local, selectedPhotos: new Set(),
       folders, localFolders, uploadFolder: records.find(record => record.id === 'upload-folder')?.folder || '', deletingPhotos: new Set(),
       values, remote: new Map(), excelUpload, patches: new Map(records.filter(record => record.type === 'patch')
         .sort((a, b) => a.id.localeCompare(b.id)).map(record => [record.id, record])),
@@ -1592,8 +1592,11 @@ function receiptList() {
 function resultFor(receipt, index) {
   const id = lineId(receipt, index);
   const line = receipt.lines[index];
-  return workspace.comparison.results.get(id) || { id, receipt, index, line,
-    date: datesFor(receipt)[index].delivery, chosen: line.elegida, state: line.estado || 'pending', decision: line.decision };
+  const result = workspace.comparison.results.get(id);
+  if (result) return result;
+  const { delivery: date, returnDay, returnLabel } = datesFor(receipt)[index];
+  return { id, receipt, index, line, date, returnDay, returnLabel,
+    chosen: line.elegida, state: line.estado || 'pending', decision: line.decision };
 }
 
 function similarityBadge(value) {
@@ -1605,8 +1608,10 @@ const comparisonLabels = {
   match: 'Coincide', similar: 'Similar', different: 'No coincide', unavailable: 'Sin comparar'
 };
 
-function formatRow(row, result, { canChoose = false, assigned = false, suggested = false, similarity } = {}) {
+function formatRow(row, result, { canChoose = false, assigned = false, suggested = false, similarity,
+  returnReview = reviewReturn(result, row) } = {}) {
   const fields = compareRowFields(result, row, similarity);
+  if (returnReview) fields.push(...returnReview.fields);
   const cells = fields.map(field => {
     const score = field.similarity != null && field.status !== 'unavailable' ? ` · ${field.similarity}%` : '';
     const days = field.days > 0 ? `${field.days} ${field.days === 1 ? 'día' : 'días'} de diferencia` : '';
@@ -1619,7 +1624,8 @@ function formatRow(row, result, { canChoose = false, assigned = false, suggested
       <thead><tr><th scope="col">Dato</th><th scope="col">Remito</th><th scope="col">Excel</th><th scope="col">Resultado</th></tr></thead>
       <tbody>${cells}</tbody>
     </table>
-    ${row.movimiento ? `<div>Movimiento en Excel · ${html(row.movimiento)}</div>` : ''}
+    ${!returnReview && row.movimiento ? `<div>Movimiento en Excel · ${html(row.movimiento)}</div>` : ''}
+    ${canChoose && returnReview?.movementWarning ? '<div class="warning">Posible error de movimiento entre el remito y el Excel.</div>' : ''}
     ${assigned ? '<div class="warning">Fila ya asignada a otra línea.</div>' : ''}
     ${canChoose ? `<button type="button" class="small" data-pick="${row.fila}">Elegir fila ${row.fila}</button>` : ''}</div>`;
 }
@@ -1632,7 +1638,7 @@ function editField(field, label, value, editable, wide = false) {
   if (!editable) return readField(label, value, wide);
   const editor = ['observacion', 'descripcion', 'nota_manuscrita'].includes(field)
     ? `<textarea rows="2" data-field="${field}" aria-label="${label}">${html(value)}</textarea>`
-    : `<input type="text" data-field="${field}" aria-label="${label}" value="${html(value)}">`;
+    : `<input type="text" data-field="${field}" aria-label="${label}" value="${html(value)}"${field === 'fecha_devolucion' ? ' placeholder="dd/mm/aa"' : ''}>`;
   return `<label class="field${wide ? ' wide' : ''}">${label}${editor}</label>`;
 }
 
@@ -1654,8 +1660,9 @@ function lineMarkup(line, editable) {
   return `<tr data-line="${line.key}"><td data-label="Fecha">${compact('fecha_linea')}<span class="hint" data-effective-date></span></td>
     <td data-label="Descripción">${editable ? `<textarea rows="2" data-field="descripcion" aria-label="Descripción">${html(line.descripcion)}</textarea>
       ${rubroMarkup(line)}<button type="button" class="small" data-action="recompare" hidden>Volver a buscar en Excel</button>` : `<span class="read-field">${html(line.descripcion || '—')}</span>`}
-      ${highlight}<details><summary>Devolución y notas <span class="hint" data-return-date></span></summary><div class="edit-grid">
-      ${editField('fecha_devolucion', 'Fecha devuelta', line.fecha_devolucion, editable)}
+      ${highlight}<details data-return-details><summary>Devolución y notas <span class="return-date" data-return-date></span></summary><div class="edit-grid">
+      ${editable ? `<label class="check"><input type="checkbox" data-field="devolucion_marcada" ${line.devolucion_marcada ? 'checked' : ''}> Devolución marcada en el remito</label>` : ''}
+      ${editField('fecha_devolucion', 'Fecha de devolución', line.fecha_devolucion, editable)}
       ${editField('cantidad_devuelta', 'Cantidad devuelta', line.cantidad_devuelta, editable)}
       ${editField('nota_manuscrita', 'Nota manuscrita', line.nota_manuscrita, editable)}${confidence}
       ${editable ? '<div><button type="button" class="small" data-action="remove">Quitar línea</button></div>' : ''}
@@ -1707,19 +1714,22 @@ function renderPhoto(card, receipt, job) {
   if (!url) image.removeAttribute('src');
 }
 
-function renderStatus(cell, result) {
+function renderStatus(cell, result, returnReview) {
   const mark = result.line.verificado;
   const best = result.candidates?.[0];
   const signature = JSON.stringify([result.state, result.chosen, result.decision, result.conflict, result.stale, result.date, result.line.fecha_linea,
     result.line.cantidad, result.line.descripcion, result.receipt.numero_remito, result.receipt.persona, result.receipt.obra_o_vehiculo,
-    best, !!workspace.excel, mark]);
+    best, !!workspace.excel, mark, returnReview]);
   if (cell.dataset.signature === signature) return;
   cell.dataset.signature = signature;
-  const chosen = result.chosen ? formatRow(result.chosen, result) : '';
-  const suggestion = !chosen && best ? formatRow(best.row, result, { suggested: true, similarity: best.similarity, assigned: best.assigned }) : '';
+  const chosen = result.chosen ? formatRow(result.chosen, result, { returnReview }) : '';
+  const suggestion = !chosen && best ? formatRow(best.row, result, { suggested: true, similarity: best.similarity,
+    assigned: best.assigned, returnReview }) : '';
   const noSuggestion = !chosen && !best && workspace.excel && result.decision !== 'absent' && ['missing', 'doubtful'].includes(result.state);
   const action = (id, label) => `<button type="button" class="small" data-action="${id}">${label}</button>`;
   const buttons = [];
+  if (returnReview?.needsDate) buttons.push(action('return-date', 'Completar fecha de devolución'));
+  else if (returnReview?.missingExcelDate) buttons.push(action('return-date', 'Revisar fecha de devolución'));
   if (result.state !== 'skipped') {
     if (result.chosen && !result.decision) buttons.push(action('confirm', 'Confirmar'));
     if (workspace.excel) buttons.push(action('choose', result.chosen ? 'Elegir otra fila' : result.candidates?.length ? 'Ver candidatos' : 'Buscar en Excel'));
@@ -1732,6 +1742,8 @@ function renderStatus(cell, result) {
     <p>Última verificación <time datetime="${new Date(mark.fecha).toISOString()}">${loadTime.format(mark.fecha)}</time></p>
     ${mark.por ? `<p>${html(mark.por)}</p>` : ''}</div>` : '';
   cell.innerHTML = `${verificationBadge}<span class="status ${result.state}">${states[result.state]}</span>${chosen}${suggestion}
+    ${returnReview?.needsDate ? '<p class="return-alert">Falta una fecha de devolución completa en el remito.</p>' : ''}
+    ${returnReview?.movementWarning ? '<p class="return-alert">Posible error de movimiento. El remito indica devolución y el Excel no la registra como tal.</p>' : ''}
     ${noSuggestion ? similarityBadge(0) : ''}
     ${result.state === 'skipped' && workspace.excel ? '<p class="hint">Esta línea está fuera de la comparación de resaltadas.</p>' : ''}
     ${result.decision ? `<p class="details-text">${decisions[result.decision]}</p>` : ''}
@@ -1869,6 +1881,7 @@ function render() {
     let compared = 0, finished = 0, rowVisible = false;
     receipt.lines.forEach((line, index) => {
       const result = resultFor(receipt, index);
+      const returnReview = reviewReturn(result, result.chosen || result.candidates?.[0]?.row);
       const counts = countsByFolder.get(folder)[line.resaltado ? 'highlighted' : 'plain'];
       counts.total++;
       if (Object.hasOwn(counts, result.state)) counts[result.state]++;
@@ -1886,13 +1899,15 @@ function render() {
       compare.hidden = !ctx.excel;
       compare.textContent = result.state === 'skipped' ? 'Comparar esta línea' : 'Volver a buscar en Excel';
       row.classList.toggle('highlighted', result.line.resaltado);
-      row.hidden = ($('only-issues').checked && !['doubtful', 'missing'].includes(result.state))
+      const hasIssue = ['doubtful', 'missing'].includes(result.state) || returnReview?.needsDate
+        || returnReview?.missingExcelDate || returnReview?.movementWarning || returnReview?.dateMismatch;
+      row.hidden = ($('only-issues').checked && !hasIssue)
         || (filter !== 'all' && !!line.verificado !== (filter === 'yes'));
       rowVisible ||= !row.hidden;
       const label = dates[index].label;
       row.querySelector('[data-effective-date]').textContent = label !== result.line.fecha_linea ? label : '';
       row.querySelector('[data-return-date]').textContent = dates[index].returnLabel ? `· ${dates[index].returnLabel}` : '';
-      renderStatus(row.querySelector('[data-result]'), result);
+      renderStatus(row.querySelector('[data-result]'), result, returnReview);
     });
     const checked = matches.ok + matches.doubtful + matches.missing;
     const summary = [checked && `Coinciden ${matches.ok} de ${checked} líneas comparadas`,
@@ -2008,7 +2023,7 @@ function editReceipt(event) {
   }
   const field = control.dataset.field;
   if (!field) return;
-  const value = field === 'resaltado' ? control.checked : text(control.value);
+  const value = control.type === 'checkbox' ? control.checked : text(control.value);
   if (line && line[field] !== value) changeLine(receipt, key, { [field]: value });
   else if (!key && receipt[field] !== value) changeReceipt({ [id + '/' + field]: value });
 }
@@ -2033,6 +2048,12 @@ async function doLineAction(event) {
   }
   const index = receipt.lines.findIndex(line => line.key === key);
   if (index < 0) return;
+  if (action === 'return-date') {
+    const details = button.closest('tr').querySelector('[data-return-details]');
+    details.open = true;
+    details.querySelector('[data-field="fecha_devolucion"]').focus();
+    return;
+  }
   if (action === 'remove') {
     if (window.confirm('¿Quitar esta línea de la transcripción?')) changeLine(receipt, key, { deleted: true });
     return;
@@ -2108,7 +2129,7 @@ function chooseRow(event) {
 
 function useWorkbook(ctx, workbook) {
   ctx.workbook = workbook;
-  ctx.excel = workbook ? indexWorkbook(workbook.rows) : null;
+  ctx.excel = workbook ? indexWorkbook(workbook.rows, workbook.base) : null;
   recalculate(ctx);
   if (workspace === ctx) render();
 }

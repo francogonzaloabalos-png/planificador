@@ -8,6 +8,8 @@ export const excelColumns = {
   condicion: 'CONDICION', cantidad: 'CANTIDAD', persona: 'COLUMNA 7', obra: 'OBRA',
   movimiento: 'MOVIMIENTO', remito: 'N REMITO'
 };
+const observationHeaders = ['OBSERVACIONES', 'OBSERVACION', 'OBSERVACIONES GENERALES'];
+const lineBooleanFields = new Set(['resaltado', 'devolucion_marcada']);
 
 export const headerFields = {
   numero_remito: 'Nº de remito', fecha: 'Fecha del encabezado', persona: 'Persona',
@@ -16,7 +18,7 @@ export const headerFields = {
 
 export const lineFields = {
   fecha_linea: 'Fecha de entrega', descripcion: 'Descripción', cantidad: 'Cantidad',
-  resaltado: 'Resaltado rosa', fecha_devolucion: 'Fecha de devolución',
+  resaltado: 'Resaltado rosa', devolucion_marcada: 'Devolución marcada en el remito', fecha_devolucion: 'Fecha de devolución',
   cantidad_devuelta: 'Cantidad devuelta', nota_manuscrita: 'Nota manuscrita', confianza: 'Confianza',
   rubro: 'Rubro sugerido', otro_rubro: 'Otro rubro'
 };
@@ -92,7 +94,7 @@ export function datesFor(receipt) {
     year = delivery?.y || year;
     anchor = delivery || anchor;
     const returned = dateNear(line.fecha_devolucion, anchor, year);
-    return { delivery, label: delivery ? showDate(delivery) : line.fecha_linea,
+    return { delivery, label: delivery ? showDate(delivery) : line.fecha_linea, returnDay: returned?.day ?? null,
       returnLabel: returned ? showDate(returned) : line.fecha_devolucion };
   });
 }
@@ -108,7 +110,7 @@ function excelDate(cell, xlsx, date1904) {
 }
 
 export function readWorkbook(xlsx, bytes, { includeSource = false } = {}) {
-  const workbook = xlsx.read(bytes, { type: 'array', sheets: 'BASE DE DATOS', cellNF: includeSource, cellStyles: includeSource, cellDates: false });
+  const workbook = xlsx.read(bytes, { type: 'array', sheets: 'BASE DE DATOS', cellNF: true, cellStyles: includeSource, cellDates: false });
   const sheet = workbook.Sheets['BASE DE DATOS'];
   if (!sheet?.['!ref']) throw new Error('El archivo debe tener una hoja «BASE DE DATOS».');
   const date1904 = !!workbook.Workbook?.WBProps?.date1904;
@@ -148,6 +150,7 @@ function readBaseRows(xlsx, sheet, date1904) {
   if (!headers.has('N REMITO') && headers.has('NRO REMITO')) headers.set('N REMITO', headers.get('NRO REMITO'));
   const missing = Object.values(excelColumns).filter(label => !headers.has(label));
   if (missing.length) throw new Error(`Faltan encabezados en la fila 2: ${missing.join(', ')}.`);
+  const observationColumn = observationHeaders.map(name => headers.get(name)).find(index => index !== undefined);
 
   const rows = [];
   for (let r = 2; r <= range.e.r; r++) {
@@ -159,9 +162,28 @@ function readBaseRows(xlsx, sheet, date1904) {
         ? excelDate(entry, xlsx, date1904)
         : text(field === 'remito' ? entry?.w ?? entry?.v : entry?.v);
     }
+    const observation = observationColumn === undefined ? null : cell(r, observationColumn);
+    if (observation?.t !== 'e') row.observaciones = observationText(observation, date1904);
     rows.push(row);
   }
   return rows;
+}
+
+function observationText(cell, date1904) {
+  const format = (cell?.z || '').replace(/"[^"]*"|\[[^\]]*\]|\\./g, '');
+  if (typeof cell?.v !== 'number' || !/[dy]/i.test(format) || !/m/i.test(format)) return text(cell?.v);
+  const serial = Math.floor(cell.v);
+  const offset = date1904 ? 24107 : serial < 60 ? 25568 : 25569;
+  const date = new Date((serial - offset) * dayMillis);
+  return showDate({ d: date.getUTCDate(), m: date.getUTCMonth() + 1, y: date.getUTCFullYear() });
+}
+
+function savedObservations(base) {
+  const headers = base?.records.find(row => row.fila === 2)?.cells || {};
+  const key = Object.keys(headers).find(column => observationHeaders.includes(normalize(headers[column].v)));
+  if (!key) return new Map();
+  return new Map(base.records.filter(row => row.fila > 2 && row.cells[key])
+    .map(row => [row.fila, observationText(row.cells[key], base.date1904)]));
 }
 
 const stopWords = new Set(['A', 'C', 'D', 'DE', 'DEL', 'EL', 'EN', 'LA', 'LAS', 'LOS', 'PARA', 'S', 'UN', 'X', 'Y']);
@@ -314,6 +336,46 @@ function contextStatus(left, right, unordered = false) {
   return contextMatches(left, right) ? 'similar' : 'different';
 }
 
+export function isReturnMovement(value) {
+  return /^(?:DEVUELT[OA]S?|DEVOLUCION(?:ES)?)(?: |$)/.test(normalize(value));
+}
+
+function markedReturn(line) {
+  const date = normalize(line.fecha_devolucion);
+  return line.devolucion_marcada || (date && !/^(SIN DATO|S N)$/.test(date)) || number(line.cantidad_devuelta) > 0;
+}
+
+function observationDates(row) {
+  const anchor = parseDate(row.fecha);
+  const dates = /(?<!\d)(?<!\d[/.-])(?:\d{4}-\d{2}-\d{2}|\d{1,2}\s*[/.-]\s*\d{1,2}\s*[/.-]\s*(?:\d{4}|\d{2})|\d{1,2}\s*\/\s*\d{1,2})(?!\d|[/.-]\s*\d)/g;
+  const matches = text(row.observaciones).match(dates) || [];
+  return matches.map(value => dateNear(value, anchor, anchor?.y)).filter(date => date?.day != null);
+}
+
+export function reviewReturn({ line, returnDay, returnLabel }, row) {
+  const inRemito = !!markedReturn(line);
+  const inExcel = isReturnMovement(row?.movimiento);
+  if (!inRemito && !inExcel) return null;
+  const dates = inExcel || isReturnMovement(row?.observaciones) ? observationDates(row) : [];
+  const daysInExcel = new Set(dates.map(date => date.day));
+  const excelDate = daysInExcel.size === 1 ? dates[0] : null;
+  const days = returnDay != null && excelDate ? Math.abs(returnDay - excelDate.day) : null;
+  const observationDetail = daysInExcel.size > 1 ? 'Varias fechas en Observaciones'
+    : excelDate ? 'En Observaciones' : inExcel ? 'Sin fecha en Observaciones' : '';
+  return {
+    needsDate: returnDay == null,
+    missingExcelDate: inExcel && !excelDate,
+    dateMismatch: days > 0,
+    movementWarning: !!row && inRemito && !inExcel,
+    fields: [
+      { label: 'Movimiento', remito: inRemito ? 'Devolución' : 'Sin marca de devolución', excel: row?.movimiento,
+        status: fieldStatus(!!row && inRemito, inExcel) },
+      { label: 'Fecha de devolución', remito: returnLabel, excel: excelDate ? showDate(excelDate) : '',
+        detail: observationDetail, status: fieldStatus(days !== null, days === 0), days }
+    ]
+  };
+}
+
 export function compareRowFields({ receipt, line, date }, row, similarity = materialSimilarity(line.descripcion, row.herramienta)) {
   const { days, delivered, recorded, printed, recordedNumber } = rowDifferences(receipt, line, date, row);
   const materialStatus = !missingText(line.descripcion) && !missingText(row.herramienta)
@@ -334,15 +396,19 @@ export function compareRowFields({ receipt, line, date }, row, similarity = mate
   ];
 }
 
-export function indexWorkbook(rows) {
+const comparisonColumns = [...Object.keys(excelColumns), 'observaciones'];
+
+export function indexWorkbook(rows, base) {
   const byDay = new Map();
   const byRemito = new Map();
   const unknownDays = [];
   const wordsByTool = new Map();
+  const observations = savedObservations(base);
   const items = rows.map(row => {
     if (!wordsByTool.has(row.herramienta)) wordsByTool.set(row.herramienta, materialWords(row.herramienta));
-    const item = { ...row, day: excelDay(row.fecha), remitoNumber: remitoNumber(row.remito), words: wordsByTool.get(row.herramienta),
-      search: normalize([row.fila, ...Object.keys(excelColumns).map(key => row[key])].join(' ')) };
+    const item = { ...row, observaciones: row.observaciones ?? observations.get(row.fila) ?? '',
+      day: excelDay(row.fecha), remitoNumber: remitoNumber(row.remito), words: wordsByTool.get(row.herramienta) };
+    item.search = normalize([item.fila, ...comparisonColumns.map(key => item[key])].join(' '));
     if (item.day === null) unknownDays.push(item);
     else {
       if (!byDay.has(item.day)) byDay.set(item.day, []);
@@ -415,7 +481,7 @@ function similarMaterials(excel, description) {
 
 export function chosenRow(row) {
   if (!Number.isInteger(row?.fila) || row.fila < 3) return null;
-  return { fila: row.fila, ...Object.fromEntries(Object.keys(excelColumns).map(key => [key, text(row[key])])) };
+  return { fila: row.fila, ...Object.fromEntries(comparisonColumns.map(key => [key, text(row[key])])) };
 }
 
 export const lineId = (receipt, index) => `${receipt.id}/${index}`;
@@ -437,8 +503,8 @@ export function compareReceipts(local, remote, excel, includeAll) {
       const id = lineId(receipt, index);
       const compared = includeAll || line.resaltado || line.comparar || line.decision;
       const explicit = line.decision === 'manual' || line.decision === 'confirmed';
-      const date = dates[index].delivery;
-      const result = { id, receipt, line, index, date, candidates: [], chosen: null, state: 'pending', decision: line.decision };
+      const { delivery: date, returnDay, returnLabel } = dates[index];
+      const result = { id, receipt, line, index, date, returnDay, returnLabel, candidates: [], chosen: null, state: 'pending', decision: line.decision };
       const savedRow = line.elegida;
       const currentRow = excel && savedRow && excel.byRow.get(savedRow.fila);
       const stale = !!(explicit && excel && savedRow && (!currentRow
@@ -513,7 +579,8 @@ function schemaObject(properties) {
 
 const stringFields = fields => Object.fromEntries(Object.keys(fields).map(key => [key, { type: 'STRING' }]));
 const ocrLine = {
-  ...stringFields(lineFields), resaltado: { type: 'BOOLEAN' }, confianza: { type: 'STRING', enum: ['alta', 'media', 'baja'] },
+  ...stringFields(lineFields), ...Object.fromEntries([...lineBooleanFields].map(key => [key, { type: 'BOOLEAN' }])),
+  confianza: { type: 'STRING', enum: ['alta', 'media', 'baja'] },
   rubro: { type: 'STRING', enum: Object.keys(productCategories) }
 };
 const ocrHeader = stringFields(headerFields);
@@ -527,7 +594,7 @@ Si en DESCRIPCIÓN hay tildes, comillas de repetición o una marca de ídem, exp
 ENTREGAS: fecha_linea es la fecha a la izquierda de esa línea. Una tilde ✓ de repetición en FECHA copia la fecha de la línea anterior. Si solo falta el año, inferilo de fechas completas próximas o del encabezado, con cuidado si cambia el año. Si el año no se puede inferir, conservá dd/mm. Si falta toda la fecha y no hay marca o grupo inequívoco, dejala vacía. Usá dd/mm/aa para fechas completas, formato argentino.
 La cantidad entregada es el número en CANTIDAD o CANTIDAD ENTREGADA; si está vacío y el número está escrito en UNIDAD, tomalo de ahí. No tomes números que forman parte de la descripción. Conservá las cantidades como texto.
 Resaltado es true solo cuando el marcador rosa/magenta cubre parte del renglón de la herramienta. Firmas, tinta roja y tildes no cuentan como resaltado. Transcribí también las líneas sin resaltado.
-DEVOLUCIÓN: extraé fecha_devolucion y cantidad_devuelta solo si se ven para esa línea. Suelen estar en tinta roja, a la derecha. En algunos formularios la fecha está bajo TOTAL DE ENTREGA y en otros hay una columna FECHA en DEVOLUCIÓN. Guiate por la posición aunque haya tinta negra. No copies la fecha de entrega a devolución ni deduzcas devoluciones de firmas. En una hoja manuscrita no dupliques entregas a partir de marcas o listas de devolución.
+DEVOLUCIÓN: extraé fecha_devolucion y cantidad_devuelta de los campos a la derecha de esa misma línea. La fecha suele estar en tinta roja y puede aparecer bajo TOTAL DE ENTREGA o bajo FECHA dentro de DEVOLUCIÓN. Alineá cada fecha con su renglón aunque la anotación cruce el borde. Usá dd/mm/aa si se lee el año y dd/mm si falta. Devolucion_marcada es true cuando esa línea tiene una fecha, cantidad o indicación explícita de devolución, incluso si la fecha falta o es ilegible. Una firma, una tilde de control, el marcador rosa o el color de tinta por sí solos no indican devolución. No copies la fecha de entrega en fecha_devolucion ni asignes una fecha de otra línea sin indicación inequívoca. En una hoja manuscrita no dupliques entregas a partir de marcas o listas de devolución.
 Para cada línea sugerí un rubro: epp_sujecion (protección personal o elementos de sujeción), consumibles (insumos que se gastan o reemplazan), herramientas_equipos (herramientas, accesorios reutilizables y equipos), otros (producto o servicio fuera de esos rubros; poné una descripción breve del rubro en otro_rubro) o sin_clasificar si no alcanza el texto para decidir. Dejá otro_rubro vacío salvo para otros.
 Usá cadena vacía para datos ausentes, [ilegible] para datos presentes pero ilegibles (incluí el fragmento que sí se lee), y confianza baja cuando sea difícil leer la línea. No inventes. JSON puro con todos los campos del esquema.`;
 
@@ -616,7 +683,8 @@ function parseTranscription(json) {
   if (!Array.isArray(parsed?.lineas)) throw new Error('Gemini no devolvió una lista de líneas válida.');
   const lines = expandRepeatedMaterials(parsed.lineas.map(line => {
     const rubro = Object.hasOwn(productCategories, line?.rubro) ? line.rubro : 'sin_clasificar';
-    return validateFields({ ...line, rubro, otro_rubro: text(line?.otro_rubro).slice(0, 80) }, ocrLine);
+    return validateFields({ ...line, devolucion_marcada: line?.devolucion_marcada ?? false,
+      rubro, otro_rubro: text(line?.otro_rubro).slice(0, 80) }, ocrLine);
   })).map(line => line.rubro === 'sin_clasificar' ? { ...line, rubro: suggestProductCategory(line.descripcion) } : line);
   return { ...validateFields(parsed, ocrHeader), lines };
 }
@@ -650,7 +718,7 @@ function verificationMark(value) {
 }
 
 export function publicLine(line, order) {
-  const fields = Object.fromEntries(Object.keys(lineFields).map(key => [key, key === 'resaltado' ? !!line[key] : text(line[key])]));
+  const fields = Object.fromEntries(Object.keys(lineFields).map(key => [key, lineBooleanFields.has(key) ? !!line[key] : text(line[key])]));
   const mark = verificationMark(line.verificado);
   return { ...fields, order, estado: line.estado || 'pending', decision: line.decision || '',
     ...(line.comparar && { comparar: true }), ...(line.elegida && { elegida: chosenRow(line.elegida) }),
@@ -672,7 +740,7 @@ export function receiveReceipt(id, value) {
   const lines = Object.entries(value.lines || {}).filter(([key, line]) => /^l[a-z0-9-]+$/i.test(key) && line && !line.deleted)
     .map(([key, line]) => {
       const order = Number.isFinite(line.order) ? line.order : Number(key.slice(1)) || 0;
-      return { key, order, ...Object.fromEntries(Object.keys(lineFields).map(field => [field, field === 'resaltado' ? line[field] === true : text(line[field])])),
+      return { key, order, ...Object.fromEntries(Object.keys(lineFields).map(field => [field, lineBooleanFields.has(field) ? line[field] === true : text(line[field])])),
         decision: Object.hasOwn(decisions, line?.decision) ? line.decision : '',
         estado: Object.hasOwn(states, line?.estado) ? line.estado : 'pending', elegida: chosenRow(line?.elegida),
         comparar: line.comparar === true,
@@ -686,12 +754,11 @@ export function receiveReceipt(id, value) {
 
 // Cada bloque queda muy por debajo del límite de escritura del SDK.
 export function excelBlocks(rows, copySource = false) {
-  const columns = Object.keys(excelColumns);
   const encoder = new TextEncoder();
   const blocks = [];
   let block = {}, bytes = 0;
   for (const source of rows) {
-    const row = copySource ? source : { fila: source.fila, ...Object.fromEntries(columns.map(key => [key, text(source[key])])) };
+    const row = copySource ? source : { fila: source.fila, ...Object.fromEntries(comparisonColumns.map(key => [key, text(source[key])])) };
     const size = encoder.encode(JSON.stringify(row)).length + 20;
     if (bytes && bytes + size > 512 * 1024) {
       blocks.push(block);
@@ -707,14 +774,15 @@ export function excelBlocks(rows, copySource = false) {
 
 export function exportRows(receipts, comparison) {
   const rows = [['Remito', 'Persona', 'Obra / vehículo', 'Fecha de línea', 'Descripción', 'Resaltado', 'Estado', 'Fila Excel', 'Decisión',
-    'Rubro sugerido']];
+    'Rubro sugerido', 'Fecha de devolución']];
   for (const receipt of receipts) {
     const dates = datesFor(receipt);
     receipt.lines.forEach((line, index) => {
       const local = comparison.get(lineId(receipt, index));
       rows.push([receipt.numero_remito, receipt.persona, receipt.obra_o_vehiculo, dates[index].label, line.descripcion,
         line.resaltado ? 'Sí' : 'No', states[local?.state || line.estado || 'pending'],
-        (local ? local.chosen?.fila : line.elegida?.fila) ?? '', decisions[local ? local.decision : line.decision] || '', productLabel(line)]);
+        (local ? local.chosen?.fila : line.elegida?.fila) ?? '', decisions[local ? local.decision : line.decision] || '', productLabel(line),
+        dates[index].returnLabel || '']);
     });
   }
   return rows;
