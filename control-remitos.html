@@ -44,6 +44,14 @@
     .folder>summary{padding:7px 10px;overflow-wrap:anywhere}
     .folder-heading{display:inline-flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;width:calc(100% - 1.3em);vertical-align:middle}
     .folder>summary .small{min-height:29px}
+    .folder-stats{margin:0 8px 8px;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
+    .folder-stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(230px,100%),1fr));gap:8px;margin-top:6px}
+    .folder-stats-grid h3{font-size:.9rem;padding-bottom:3px}
+    .folder-stats-grid .pink-lines{border-left:3px solid #d65496;padding-left:7px}
+    .folder-counts{margin:0;display:flex;flex-wrap:wrap;gap:3px 10px;font-size:.83rem}
+    .folder-counts div{display:flex;gap:4px;align-items:baseline;color:var(--tone,var(--soft))}
+    .folder-counts dd{margin:0;font-weight:700;font-variant-numeric:tabular-nums}
+    .folder-stats>p:last-child{margin-top:6px}
     .folder-upload{margin:0 8px 8px}
     .folder>ul,.folder-cards{margin:0 8px 8px}
     .folder-cards{display:grid;gap:8px}
@@ -75,6 +83,10 @@
     .similarity.high{color:#14543a;background:#e1f4e9}
     .similarity.full{color:#fff;background:#176449}
     .similarity strong{font-size:1rem}
+    .verification-mark{background:#e1f4e9;border-left:3px solid var(--ok);border-radius:6px;color:#14543a;margin-bottom:7px;padding:3px 8px 6px;overflow-wrap:anywhere}
+    .verification-mark .check{font-weight:700;min-height:28px}
+    .verification-mark p{font-size:.83rem}
+    .verification-mark time{font-weight:700}
     .read-field{display:block;overflow-wrap:anywhere;white-space:pre-wrap;font-weight:400}
     .receipt-foot{margin-top:9px} .empty{padding:22px;color:var(--soft)}
     dialog{max-width:min(700px,calc(100% - 20px));width:100%;max-height:90dvh;padding:16px;border:1px solid var(--line);border-radius:12px;color:var(--ink)}
@@ -93,7 +105,7 @@
       td::before{content:attr(data-label);display:block;color:var(--soft);font-weight:650;font-size:.8rem;margin-bottom:2px}
     }
   </style>
-  <script type="module" src="control-remitos.js?v=opciones-fotos-carpetas"></script>
+  <script type="module" src="control-remitos.js?v=verificacion-y-detalle"></script>
 </head>
 <body>
   <main>
@@ -170,6 +182,21 @@
       <p id="empty" class="empty">Agregá fotos para empezar o abrí el control desde una sala del planificador para ver sus resultados.</p>
     </section>
   </main>
+
+  <dialog id="verify-dialog" class="photo-dialog" aria-labelledby="verify-title">
+    <form id="verify-form" class="stack">
+      <h2 id="verify-title">Verificar línea</h2>
+      <p id="verify-line"></p>
+      <p class="hint">La fecha y la hora se guardan automáticamente. Podés agregar tu nombre a la verificación.</p>
+      <label class="field">Nombre (opcional) <input id="verify-person" type="text" maxlength="120" autocomplete="off" autofocus></label>
+      <p id="verify-error" class="hint error" role="status" hidden></p>
+      <div class="actions">
+        <button type="button" id="cancel-verify">Cancelar</button>
+        <button type="button" id="verify-date-only">Solo fecha</button>
+        <button type="submit" id="verify-with-name" class="primary">Verificar con nombre</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="photo-preview" aria-labelledby="preview-title">
     <div class="top"><h2 id="preview-title">Vista previa</h2><form method="dialog"><button class="small">Cerrar</button></form></div>

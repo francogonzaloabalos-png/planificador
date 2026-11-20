@@ -2,7 +2,7 @@ import {
   headerFields, lineFields, states, decisions, normalize, text, datesFor, readWorkbook,
   differences, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
   receiveReceipt, exportRows, excelDay, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, materialSimilarity
-} from './control-remitos-core.js?v=similitud-excel';
+} from './control-remitos-core.js?v=verificacion-y-detalle';
 
 const $ = id => document.getElementById(id);
 const LEGACY_KEY = 'control_remitos_gemini_key_v1';
@@ -41,6 +41,7 @@ let receiptRemoval;
 let move;
 let folderEdit;
 let photoUpload;
+let verification;
 let previewUrl;
 let previewTicket = 0;
 const libraries = new Map();
@@ -147,7 +148,7 @@ async function refreshRoom() {
   excelFeedback('');
   if ($('chooser').open) $('chooser').close();
   if ($('photo-preview').open) $('photo-preview').close();
-  for (const id of ['remove-photo-dialog', 'move-photo-dialog', 'remove-receipt-dialog', 'folder-name-dialog']) if ($(id).open) $(id).close();
+  for (const id of ['remove-photo-dialog', 'move-photo-dialog', 'remove-receipt-dialog', 'folder-name-dialog', 'verify-dialog']) if ($(id).open) $(id).close();
   for (const [id] of photoUrls) forgetPhoto(id);
   photoUrls.clear();
   cards.clear();
@@ -465,9 +466,9 @@ async function changeReceipt(fields, ctx = workspace) {
       await storeRecords([{ id: 'cloud', scope: ctx.scope, values: ctx.values }]);
     } else {
       const patch = { id: 'patch-' + newId(), scope: ctx.scope, type: 'patch', fields };
+      await storeRecords([patch]);
       ctx.patches.set(patch.id, patch);
       recalculate(ctx);
-      await storeRecords([patch]);
       flush(ctx);
     }
   } catch {
@@ -734,9 +735,14 @@ async function createFolder() {
   } catch { storeError(); }
 }
 
-function folderHeading(id, name) {
+const folderDetailId = id => `folder-detail-${id || 'sin-carpeta'}`;
+
+function folderHeading(id, name, showDetail = false) {
   return `<span class="folder-heading"><span data-folder-title>${html(name)}</span>
-    <button type="button" class="small" data-folder-edit="${id}" aria-label="Editar nombre de ${html(name)}">Editar nombre</button></span>`;
+    <span class="actions">
+      ${showDetail ? `<button type="button" class="small" data-folder-detail aria-controls="${folderDetailId(id)}" aria-expanded="false">Ver detalle</button>` : ''}
+      <button type="button" class="small" data-folder-edit="${id}" aria-label="Editar nombre de ${html(name)}">Editar nombre</button>
+    </span></span>`;
 }
 
 function askFolderName(event) {
@@ -1665,15 +1671,18 @@ function renderStatus(cell, result) {
     if (result.decision) buttons.push(action('undo', 'Reabrir'));
   }
   const canVerify = mark || ['ok', 'doubtful', 'missing'].includes(result.state);
-  cell.innerHTML = `<span class="status ${result.state}">${states[result.state]}</span>${chosen}${suggestion}
+  const verificationControl = canVerify ? `<label class="check"><input type="checkbox" data-verify ${mark ? 'checked' : ''}> ✓ Verificado</label>` : '';
+  const verificationBadge = mark ? `<div class="verification-mark">${verificationControl}
+    <p>Última verificación <time datetime="${new Date(mark.fecha).toISOString()}">${loadTime.format(mark.fecha)}</time></p>
+    ${mark.por ? `<p>${html(mark.por)}</p>` : ''}</div>` : '';
+  cell.innerHTML = `${verificationBadge}<span class="status ${result.state}">${states[result.state]}</span>${chosen}${suggestion}
     ${noSuggestion ? similarityBadge(0) : ''}
     ${result.state === 'skipped' && workspace.excel ? '<p class="hint">Esta línea está fuera de la comparación de resaltadas.</p>' : ''}
     ${result.decision ? `<p class="details-text">${decisions[result.decision]}</p>` : ''}
     ${result.conflict ? '<p class="details-text">La fila ya está asignada a otra línea.</p>' : ''}
     ${result.stale ? '<p class="details-text">La fila elegida cambió en el Excel de la sala.</p>' : ''}
     ${result.state === 'pending' ? '<p class="hint">Cargá el Excel para comparar.</p>' : ''}
-    ${canVerify ? `<label class="check"><input type="checkbox" data-verify ${mark ? 'checked' : ''}> ✓ Verificado</label>` : ''}
-    ${mark ? `<p class="details-text">${html(mark.por)} · ${loadTime.format(mark.fecha)}</p>` : ''}
+    ${mark ? '' : verificationControl}
     ${buttons.length ? `<div class="actions">${buttons.join('')}</div>` : ''}`;
 }
 
@@ -1695,6 +1704,45 @@ function selectOptions(id, values, all) {
   select.dataset.options = signature;
   select.replaceChildren(new Option(all, ''), ...items.map(value => new Option(value, value)));
   if (items.includes(previous)) select.value = previous;
+}
+
+function lineCounts() {
+  return { total: 0, ok: 0, doubtful: 0, missing: 0, skipped: 0, pending: 0 };
+}
+
+function renderFolderDetail(panel, count, totals) {
+  const signature = JSON.stringify([count, totals]);
+  if (panel.dataset.signature === signature) return;
+  panel.dataset.signature = signature;
+  const group = (label, lines, className = '') => `<div class="${className}">
+    <h3>${label} · ${lines.total} ${lines.total === 1 ? 'línea' : 'líneas'}</h3>
+    <dl class="folder-counts">
+      <div class="ok"><dt>Coinciden</dt><dd data-folder-count="ok">${lines.ok}</dd></div>
+      <div class="doubtful"><dt>Dudosas</dt><dd data-folder-count="doubtful">${lines.doubtful}</dd></div>
+      <div class="missing"><dt>No encontradas</dt><dd data-folder-count="missing">${lines.missing}</dd></div>
+      <div><dt>Sin comparar</dt><dd data-folder-count="skipped">${lines.skipped + lines.pending}</dd></div>
+    </dl></div>`;
+  const total = totals.highlighted.total + totals.plain.total;
+  panel.innerHTML = `<p class="hint">${count} ${count === 1 ? 'remito' : 'remitos'} · ${total} ${total === 1 ? 'línea de materiales' : 'líneas de materiales'}</p>
+    <div class="folder-stats-grid">${group('Resaltadas en rosa', totals.highlighted, 'pink-lines')}${group('Sin resaltar', totals.plain, 'plain-lines')}</div>
+    ${totals.plain.skipped ? '<p class="hint">Para comparar también las líneas sin resaltar, activá «Comparar todas las líneas».</p>' : ''}`;
+}
+
+function setFolderDetail(group, visible) {
+  group.querySelector('[data-folder-stats]').hidden = !visible;
+  const button = group.querySelector('[data-folder-detail]');
+  button.setAttribute('aria-expanded', String(visible));
+  button.textContent = visible ? 'Ocultar detalle' : 'Ver detalle';
+}
+
+function toggleFolderDetail(event) {
+  const button = event.target.closest('[data-folder-detail]');
+  if (!button) return;
+  event.preventDefault();
+  const group = button.closest('[data-review-folder]');
+  const visible = group.querySelector('[data-folder-stats]').hidden;
+  if (visible) group.open = true;
+  setFolderDetail(group, visible);
 }
 
 function render() {
@@ -1719,16 +1767,21 @@ function render() {
   const folders = folderNames(ctx);
   const folderPositions = new Map();
   const visibleInFolder = new Map();
+  const countsByFolder = new Map();
   for (const [id] of folders) {
     if (!reviewFolders.has(id)) {
       const group = document.createElement('details');
       group.className = 'folder';
       group.dataset.reviewFolder = id;
       group.open = true;
-      group.innerHTML = `<summary>${folderHeading(id, folders.get(id))}</summary><div class="folder-cards"></div><p class="hint folder-cards">Sin remitos transcritos</p>`;
+      group.innerHTML = `<summary>${folderHeading(id, folders.get(id), true)}</summary>
+        <section class="folder-stats" id="${folderDetailId(id)}" data-folder-stats hidden></section>
+        <div class="folder-cards"></div><p class="hint folder-cards">Sin remitos transcritos</p>`;
+      group.addEventListener('toggle', () => { if (!group.open) setFolderDetail(group, false); });
       reviewFolders.set(id, group);
     }
     folderPositions.set(id, 0);
+    countsByFolder.set(id, { highlighted: lineCounts(), plain: lineCounts() });
   }
   receipts.forEach(receipt => {
     const job = ctx.local.get(receipt.id);
@@ -1744,7 +1797,7 @@ function render() {
     }
     const { card } = entry;
     const folder = photoFolder(ctx, receipt.id);
-    const group = reviewFolders.get(folder).querySelector('div');
+    const group = reviewFolders.get(folder).querySelector(':scope > div.folder-cards');
     const position = folderPositions.get(folder);
     if (group.children[position] !== card) group.insertBefore(card, group.children[position] || null);
     folderPositions.set(folder, position + 1);
@@ -1760,6 +1813,9 @@ function render() {
     let compared = 0, finished = 0, rowVisible = false;
     receipt.lines.forEach((line, index) => {
       const result = resultFor(receipt, index);
+      const counts = countsByFolder.get(folder)[line.resaltado ? 'highlighted' : 'plain'];
+      counts.total++;
+      if (Object.hasOwn(counts, result.state)) counts[result.state]++;
       if (['ok', 'doubtful', 'missing'].includes(result.state)) totals[result.state]++;
       if (Object.hasOwn(matches, result.state)) matches[result.state]++;
       if (result.state !== 'skipped') compared++;
@@ -1802,6 +1858,9 @@ function render() {
     group.hidden = id ? count > 0 && shown === 0 : shown === 0;
     group.querySelector('[data-folder-title]').textContent = `${name} · ${shown} ${shown === 1 ? 'remito' : 'remitos'}`;
     group.querySelector('[data-folder-edit]').setAttribute('aria-label', `Editar nombre de ${name}`);
+    group.querySelector('[data-folder-detail]').hidden = !count;
+    if (count) renderFolderDetail(group.querySelector('[data-folder-stats]'), count, countsByFolder.get(id));
+    else setFolderDetail(group, false);
     group.querySelector(':scope > p').hidden = count > 0;
     if (container.children[folderPosition] !== group) container.insertBefore(group, container.children[folderPosition] || null);
     folderPosition++;
@@ -1821,9 +1880,57 @@ function render() {
 
 const linePath = (receipt, key) => receipt.id + '/lines/' + key;
 
-function changeLine(receipt, key, fields) {
+function changeLine(receipt, key, fields, ctx = workspace) {
   const path = linePath(receipt, key);
-  return changeReceipt(Object.fromEntries(Object.entries(fields).map(([field, value]) => [path + '/' + field, value])));
+  return changeReceipt(Object.fromEntries(Object.entries(fields).map(([field, value]) => [path + '/' + field, value])), ctx);
+}
+
+function openVerification(receipt, line) {
+  verification = { ctx: workspace, id: receipt.id, key: line.key };
+  $('verify-line').textContent = line.descripcion || 'Línea sin descripción';
+  $('verify-person').value = localStorage.getItem(REVIEWER) || '';
+  $('verify-error').hidden = true;
+  $('verify-dialog').showModal();
+}
+
+async function confirmVerification(withName) {
+  const { ctx, id, key } = verification || {};
+  if (!ctx || workspace !== ctx || $('verify-with-name').disabled) return;
+  const receipt = ctx.remote.get(id);
+  const line = receipt?.lines.find(line => line.key === key);
+  if (!line || line.verificado) {
+    $('verify-dialog').close();
+    return;
+  }
+  const input = $('verify-person');
+  const error = $('verify-error');
+  const por = withName ? text(input.value).slice(0, 120) : '';
+  if (withName && !por) {
+    error.textContent = 'Escribí un nombre o elegí «Solo fecha».';
+    error.hidden = false;
+    input.focus();
+    return;
+  }
+  const controls = [input, $('verify-with-name'), $('verify-date-only'), $('cancel-verify')];
+  for (const control of controls) control.disabled = true;
+  error.hidden = true;
+  try {
+    const mark = { fecha: Date.now(), ...(por && { por }) };
+    const saved = await changeLine(receipt, key, { verificado: mark }, ctx);
+    if (workspace !== ctx) return;
+    if (!saved) {
+      error.textContent = 'No se pudo guardar la verificación. Volvé a intentar.';
+      error.hidden = false;
+      return;
+    }
+    if (por) {
+      try { localStorage.setItem(REVIEWER, por); }
+      catch { notice('Se guardó la verificación. El navegador no pudo recordar el nombre.', true); }
+    }
+    $('verify-dialog').close();
+  } finally {
+    for (const control of controls) control.disabled = false;
+  }
 }
 
 function editReceipt(event) {
@@ -1834,15 +1941,10 @@ function editReceipt(event) {
   const key = control.closest('tr')?.dataset.line;
   const line = receipt.lines.find(line => line.key === key);
   if (control.hasAttribute('data-verify') && line) {
-    let mark = null;
-    if (control.checked) {
-      const stored = localStorage.getItem(REVIEWER);
-      const name = text(stored || window.prompt('¿Con qué nombre querés verificar remitos?')).slice(0, 120);
-      if (!name) { control.checked = false; return; }
-      if (!stored) localStorage.setItem(REVIEWER, name);
-      mark = { por: name, fecha: Date.now() };
-    }
-    changeLine(receipt, key, { verificado: mark });
+    const checked = control.checked;
+    control.checked = !!line.verificado;
+    if (checked && !line.verificado) openVerification(receipt, line);
+    if (!checked && line.verificado) changeLine(receipt, key, { verificado: null });
     return;
   }
   const field = control.dataset.field;
@@ -2222,6 +2324,13 @@ $('cancel-folder-name').onclick = () => $('folder-name-dialog').close();
 $('folder-name-dialog').addEventListener('cancel', event => {
   if ($('save-folder-name').disabled) event.preventDefault();
 });
+$('verify-form').onsubmit = event => { event.preventDefault(); confirmVerification(true); };
+$('verify-date-only').onclick = () => confirmVerification(false);
+$('cancel-verify').onclick = () => $('verify-dialog').close();
+$('verify-dialog').addEventListener('cancel', event => {
+  if ($('verify-with-name').disabled) event.preventDefault();
+});
+$('verify-dialog').addEventListener('close', () => { if (!$('verify-dialog').open) verification = null; });
 $('sync-retry').onclick = () => { if (workspace) connect(workspace, parentConnection()); };
 $('include-all').onchange = event => {
   const ctx = workspace;
@@ -2237,6 +2346,7 @@ $('receipts').addEventListener('change', editReceipt);
 $('receipts').addEventListener('click', doLineAction);
 $('receipts').addEventListener('click', photoAction);
 $('receipts').addEventListener('click', askFolderName);
+$('receipts').addEventListener('click', toggleFolderDetail);
 $('receipts').addEventListener('focusout', event => { if (event.target.matches('[data-field]')) setTimeout(render, 0); });
 $('receipts').addEventListener('input', event => {
   if (event.target.type === 'range') zoomPhoto(event.target.closest('.photo-block').querySelector('figure'), event.target.value);

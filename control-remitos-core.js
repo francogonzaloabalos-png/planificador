@@ -498,11 +498,18 @@ function expandRepeatedMaterials(lines) {
 // La clave de línea perdura aunque se agregue o quite otra línea.
 export const newLineKey = () => `l${crypto.randomUUID()}`;
 
+function verificationMark(value) {
+  if (!Number.isFinite(value?.fecha) || Math.abs(value.fecha) > 8.64e15) return null;
+  const por = text(value.por);
+  return { fecha: value.fecha, ...(por && { por }) };
+}
+
 export function publicLine(line, order) {
   const fields = Object.fromEntries(Object.keys(lineFields).map(key => [key, key === 'resaltado' ? !!line[key] : text(line[key])]));
+  const mark = verificationMark(line.verificado);
   return { ...fields, order, estado: line.estado || 'pending', decision: line.decision || '',
     ...(line.comparar && { comparar: true }), ...(line.elegida && { elegida: chosenRow(line.elegida) }),
-    ...(line.verificado && { verificado: line.verificado }) };
+    ...(mark && { verificado: mark }) };
 }
 
 export function publicReceipt(receipt) {
@@ -520,12 +527,11 @@ export function receiveReceipt(id, value) {
   const lines = Object.entries(value.lines || {}).filter(([key, line]) => /^l[a-z0-9-]+$/i.test(key) && line && !line.deleted)
     .map(([key, line]) => {
       const order = Number.isFinite(line.order) ? line.order : Number(key.slice(1)) || 0;
-      const mark = line.verificado;
       return { key, order, ...Object.fromEntries(Object.keys(lineFields).map(field => [field, field === 'resaltado' ? line[field] === true : text(line[field])])),
         decision: Object.hasOwn(decisions, line?.decision) ? line.decision : '',
         estado: Object.hasOwn(states, line?.estado) ? line.estado : 'pending', elegida: chosenRow(line?.elegida),
         comparar: line.comparar === true,
-        verificado: mark && text(mark.por) && Number.isFinite(mark.fecha) ? { por: text(mark.por), fecha: mark.fecha } : null };
+        verificado: verificationMark(line.verificado) };
     }).sort((a, b) => a.order - b.order || a.key.localeCompare(b.key));
   return { id, ...header, nombre_archivo: text(value.nombre_archivo), carpeta_id: text(value.carpeta_id),
     photo: value.photo, lines: expandRepeatedMaterials(lines) };
