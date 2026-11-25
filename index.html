@@ -285,6 +285,18 @@ table.data tbody tr:hover{background:var(--line-soft);cursor:pointer;}
   width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);
 }
 .field textarea{resize:vertical;min-height:56px;}
+.al-search-form{display:flex;align-items:end;flex-wrap:wrap;gap:8px;}
+.al-search-form .field{flex:1 1 250px;min-width:0;}
+.al-search-form .btn{gap:6px;min-height:34px;}
+.al-search-source{display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
+.al-search-source [hidden]{display:none;}
+.al-search-note{margin:0;font-size:12px;color:var(--ink-soft);overflow-wrap:anywhere;}
+.al-search-results{display:grid;gap:8px;}
+.al-search-result{min-width:0;display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--radius);overflow-wrap:anywhere;}
+.al-search-result details summary{cursor:pointer;font-size:12px;font-weight:600;}
+.al-search-cells{display:grid;gap:4px;margin:0;font-size:12.5px;}
+.al-search-cells dt{display:inline;font-weight:600;}
+.al-search-cells dd{display:inline;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
 .modal .mfoot{padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;}
 .slider-row{display:flex;align-items:center;gap:10px;}
@@ -2373,8 +2385,18 @@ function renderDashboard(){
 }
 /* ================= ALERTAS DE INTEGRIDAD (Excel de stock) ================= */
 const ALERT_CFG_KEY = "planificador_alertas_cfg_v1";
-const alt = {data:null, loading:false, err:"", at:null, sev:"", primera:false};
+const alt = {data:null, rows:null, loading:false, err:"", at:null, sev:"", primera:false};
 const altNk = s => String(s||"").trim().toLowerCase().replace(/\s+/g," ");
+const ALT_SEARCH_PAGE = 30;
+const altSearch = {draft:"", query:"", file:null, reading:false, error:"", visible:ALT_SEARCH_PAGE, cache:null};
+const ALT_COLUMNS = {
+  id:"ID Producto", id_pedido:"ID Pedido", fecha:"Fecha", tipo:"Tipo", zona:"Zona",
+  familia:"Familia", marca:"Marca", descripcion:"Descripción", cantidad:"Cantidad", unidad:"Unidad",
+  responsable:"Responsable", obra:"Obra", envio:"N° Envío", factura:"N° Factura",
+  obs_item:"Obs. ítem", obs_general:"Obs. generales", ult_mov:"Último mov.",
+  ult_obs:"Última obs.", ult_mov_obs:"Obs. envío", ult_obs_envio:"Obs. envío",
+  ult_fecha:"Fecha", ult_hora:"Hora", stock_actual:"Stock actual"
+};
 
 /* La URL del Apps Script se guarda SOLO en este navegador (no viaja a Firebase),
    porque con esa URL se puede leer y escribir el stock. */
@@ -2406,8 +2428,8 @@ async function altFetch(action, extra){
 function altAnalizar(prods, movs){
   const A = altState(), out = [], tol = 0.011;
   let changed = false;
-  const add = (key,sev,tit,det,ack)=>out.push({key,sev,tit,det,ack});
-  const hist = " Si fue a propósito, tocá «Aceptar»; si no, se recupera desde Archivo → Historial de versiones en Google Sheets.";
+  const add = (key,sev,tit,det,ack,search)=>out.push({key,sev,tit,det,ack,search});
+  const hist = " Si fue a propósito, tocá «Aceptar». Para ver la fila anterior, revisá Archivo → Historial de versiones en Google Sheets.";
   const primera = !Object.keys(A.visto.pedidos).length && !Object.keys(A.visto.prods).length;
   alt.primera = primera;
 
@@ -2468,14 +2490,15 @@ function altAnalizar(prods, movs){
   prods.forEach(p=>{
     const k = kf(p.zona,p.familia,p.marca,p.descripcion); claves.add(k);
     const nom = `${p.id} — ${p.descripcion} (${p.zona})`;
+    const search = [p.descripcion,p.zona].filter(Boolean).join(" ");
     const calc = r2(p.entradas - p.salidas + p.devoluciones);
     if(Math.abs(calc - p.stock_actual) > tol)
-      add("stk-int:"+safeId(p.id)+":"+p.stock_actual,"alta","Stock actual pisado a mano: "+p.id,
-        `${nom}. La planilla dice ${p.stock_actual} pero Entradas − Salidas + Devoluciones da ${calc}.`, null);
+      add("stk-int:"+safeId(p.id)+":"+p.stock_actual,"alta","Stock actual no coincide con sus acumulados: "+p.id,
+        `${nom}. La planilla dice ${p.stock_actual} pero Entradas − Salidas + Devoluciones da ${calc}.`, null, search);
     const s = sum[k];
     if(!s){
       if(p.entradas||p.salidas||p.devoluciones) add("stk-nomov:"+safeId(p.id),"media","Stock sin movimientos que lo respalden: "+p.id,
-        `${nom}. Tiene Entradas ${p.entradas}, Salidas ${p.salidas}, Devol. ${p.devoluciones} pero no hay ninguna fila en Movimientos (¿se borraron o es carga inicial?).`, null);
+        `${nom}. Tiene Entradas ${p.entradas}, Salidas ${p.salidas}, Devol. ${p.devoluciones} y no aparece ninguna fila del producto en Movimientos. Revisá si hubo una carga inicial, un cambio de nombre o filas faltantes.`, null, search);
       return;
     }
     const dif = [];
@@ -2484,11 +2507,11 @@ function altAnalizar(prods, movs){
     if(Math.abs(s.D-p.devoluciones)>tol) dif.push(`Devol.: stock ${p.devoluciones} vs movimientos ${r2(s.D)}`);
     if(dif.length){
       const real = r2(s.E - s.S + s.D);
-      const pista = real < p.stock_actual
-        ? "Con los movimientos el stock sería menor: puede faltar una SALIDA (¿borrada?) o se editó el Stock a mano."
-        : "Con los movimientos el stock sería mayor: puede faltar una ENTRADA (¿borrada?) o se editó el Stock a mano.";
+      const pistas = [["entradas",p.entradas,s.E],["salidas",p.salidas,s.S],["devoluciones",p.devoluciones,s.D]]
+        .filter(([,stock,mov])=>Math.abs(stock-mov)>tol)
+        .map(([tipo,stock,mov])=>`${r2(Math.abs(stock-mov))} ${p.unidad||"unidad(es)"} de ${tipo} ${stock>mov?"más en Stock":"más en Movimientos"}`);
       add("stk-diff:"+safeId(p.id)+":"+dif.join("|"),"alta","Stock no coincide con Movimientos: "+p.id,
-        `${nom}. ${dif.join(" · ")}. Stock según movimientos: ${real}; planilla: ${p.stock_actual}. ${pista}`, null);
+        `${nom}. ${dif.join(" · ")}. Diferencia: ${pistas.join(" · ")}. Stock según Movimientos: ${real}. Stock en planilla: ${p.stock_actual}.`, null, search);
     }
     if(p.stock_actual < -tol) add("stk-neg:"+safeId(p.id)+":"+p.stock_actual,"media","Stock negativo: "+p.id, `${nom}: ${p.stock_actual}.`, null);
   });
@@ -2552,7 +2575,9 @@ async function altRevisar(silent){
   if(currentView==="alertas" && !silent) renderAlertas();
   try{
     const [pj, mj] = await Promise.all([altFetch("json"), altFetch("movimientos",{limit:100000})]);
-    alt.data = altAnalizar(pj.productos||[], mj.movimientos||[]);
+    const productos = pj.productos||[], movimientos = mj.movimientos||[];
+    alt.data = altAnalizar(productos, movimientos);
+    alt.rows = {productos, movimientos};
     alt.at = new Date();
   }catch(e){ alt.err = "No se pudo revisar: " + (e.message||e); }
   alt.loading = false;
@@ -2560,8 +2585,174 @@ async function altRevisar(silent){
   if(currentView==="alertas") renderAlertas();
 }
 
+const altTexto = value => String(value??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+  .toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+
+function altBuscarFilas(source, query){
+  const phrase = altTexto(query), terms = [...new Set(phrase.split(" "))];
+  const memo = terms.map(()=>new Map());
+  const wordScore = (term, word, index) => {
+    if(term===word) return 1;
+    if(Math.min(term.length,word.length)<4 || /\d/.test(term+word)) return 0;
+    const scores = memo[index];
+    if(!scores.has(word)) scores.set(word, Math.min(.95,xlTokSim(xlFold(term),[xlFold(word)])));
+    return scores.get(word);
+  };
+  const results = [];
+  const inspect = (sheet, number, cells) => {
+    const values = cells.map(([,value])=>altTexto(value));
+    const exactCells = cells.filter((_,i)=>(" "+values[i]+" ").includes(" "+phrase+" "));
+    let matches = exactCells, score = 2;
+    if(!matches.length){
+      const words = new Set(values.join(" ").split(" "));
+      const best = terms.map((term,index)=>{
+        if(words.has(term)) return 1;
+        let score = 0;
+        for(const word of words){
+          score = Math.max(score,wordScore(term,word,index));
+          if(score===.95) break;
+        }
+        return score;
+      });
+      if(best.includes(0)) return;
+      score = best.reduce((a,b)=>a+b,0)/best.length;
+      matches = cells.map((cell,i)=>{
+        const words = values[i].split(" ");
+        const hits = terms.reduce((total,term,index)=>total+Math.max(...words.map(word=>wordScore(term,word,index))),0);
+        return {cell,hits};
+      }).filter(x=>x.hits).sort((a,b)=>b.hits-a.hits).map(x=>x.cell);
+    }
+    const fields = new Map(cells.map(([key,value])=>[altTexto(key),value]));
+    const get = (...keys)=>keys.map(key=>fields.get(key)).find(Boolean)||"";
+    const rawDate = get("fecha","fecha y hora","fecha movimiento","ultima fecha");
+    const day = xlFechaNormalizada(rawDate);
+    const time = get("hora","ultima hora") || rawDate.match(/\d{1,2}:\d{2}(?::\d{2})?/)?.[0] || "";
+    const when = day ? [fa(day),time].filter(Boolean).join(" ") : rawDate||time;
+    const record = {
+      product:get("descripcion","producto","material"),
+      id:get("id pedido","id producto","id"),
+      type:get("tipo","ultimo mov","ultimo movimiento"),
+      qty:get("cantidad") ? [get("cantidad"),get("unidad")].filter(Boolean).join(" ") : "",
+      ref:[get("zona"),get("obra","destino"),get("responsable")].filter(Boolean).join(" · ")
+    };
+    results.push({sheet,number,cells,matches,score,record,when,order:day+xlHora(time)});
+  };
+  if(source.file){
+    source.file.rows.forEach(({sheet,number,cells})=>inspect(sheet,number,cells));
+  }else{
+    for(const [sheet,rows] of [["Stock",source.live.productos],["Movimientos",source.live.movimientos]]){
+      for(const row of rows){
+        const cells = Object.entries(row)
+          .filter(([,value])=>value!=null && typeof value!=="object" && String(value).trim())
+          .map(([key,value])=>[Object.hasOwn(ALT_COLUMNS,key)?ALT_COLUMNS[key]:key.replace(/_/g," "),String(value)]);
+        inspect(sheet,null,cells);
+      }
+    }
+  }
+  return results.sort((a,b)=>b.score-a.score || b.order.localeCompare(a.order));
+}
+
+function altExcelText(cell){
+  const value = cell.result??cell.value;
+  if(!(value instanceof Date)) return cell.text.trim();
+  const iso = value.toISOString(), time = iso.slice(11,19);
+  if(iso.slice(0,4)<"1901") return time;
+  return [fa(iso.slice(0,10)),time!=="00:00:00"?time:""].filter(Boolean).join(" ");
+}
+
+async function altLeerXlsx(file){
+  altSearch.reading = true; altSearch.error = "";
+  altDibujarBusqueda();
+  try{
+    if(typeof ExcelJS==="undefined") throw new Error("No cargó el lector de Excel. Recargá la página e intentá de nuevo.");
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await file.arrayBuffer());
+    const rows = [];
+    workbook.eachSheet(sheet=>{
+      const header = sheet.getRow(1);
+      const knownSheet = ["stock","movimientos"].includes(altTexto(sheet.name));
+      const hasHeader = knownSheet && header.values.some(value=>["descripcion","producto","material"].includes(altTexto(value)));
+      sheet.eachRow((row,number)=>{
+        if(hasHeader && number===1) return;
+        const cells = [];
+        row.eachCell((cell,column)=>{
+          const value = altExcelText(cell);
+          if(!value) return;
+          const letter = cell.address.replace(/\d+$/,"");
+          const label = (hasHeader?header.getCell(column).text.trim():"") || "Columna "+letter;
+          cells.push([label,value]);
+        });
+        if(cells.length) rows.push({sheet:sheet.name,number,cells});
+      });
+    });
+    altSearch.file = {name:file.name,rows};
+    altSearch.visible = ALT_SEARCH_PAGE;
+  }catch(error){
+    altSearch.error = "No se pudo leer la copia .xlsx. "+(error.message||error);
+  }finally{
+    altSearch.reading = false;
+    altDibujarBusqueda();
+  }
+}
+
+function altDibujarBusqueda(){
+  const box = el("alSearchResults");
+  if(!box) return;
+  const {query,file,reading,error,visible} = altSearch;
+  const source = file || alt.rows;
+  el("alSearchFile").disabled = reading;
+  el("alSearchLive").hidden = !file;
+  el("alSearchSource").textContent = reading ? "Leyendo archivo…" :
+    file ? "Copia de Excel: "+file.name : "Planilla conectada · campos disponibles en Stock y Movimientos";
+  el("alSearchError").textContent = error;
+  el("alSearchError").hidden = !error;
+  box.innerHTML = "";
+  if(!altTexto(query)) return;
+  if(!source){
+    box.innerHTML = '<p class="al-search-note">'+(alt.loading ? "Leyendo Stock y Movimientos…" :
+      "Guardá la conexión y revisá la planilla, o abrí una copia .xlsx.")+'</p>';
+    return;
+  }
+  if(altSearch.cache?.source!==source || altSearch.cache.query!==query){
+    altSearch.cache = {source,query,results:altBuscarFilas({file,live:alt.rows},query)};
+  }
+  const {results} = altSearch.cache;
+  const cellsHtml = cells=>'<dl class="al-search-cells">'+cells.map(([label,value])=>
+    '<div><dt>'+escapeHtml(label)+'</dt> <dd>'+escapeHtml(value)+'</dd></div>').join("")+'</dl>';
+  const cards = results.slice(0,visible).map(({sheet,number,cells,matches,score,record,when})=>{
+    const location = [sheet,number!=null?"fila "+number:"",record.id].filter(Boolean).join(" · ");
+    const info = [when && (altTexto(sheet)==="stock"?"Último registro de Stock "+when:when),
+      record.type,record.qty,record.ref].filter(Boolean).join(" · ");
+    return `<article class="al-search-result">
+      <div><b>${escapeHtml(record.product||location)}</b> <span class="al-search-note">${record.product?escapeHtml(location):""}</span></div>
+      ${info?`<p class="al-search-note">${escapeHtml(info)}</p>`:""}
+      <p class="al-search-note">${score===2?"Frase exacta":score===1?"Palabras en la misma fila":"Coincidencia aproximada"}</p>
+      ${cellsHtml(matches.slice(0,3))}
+      <details><summary>Ver fila</summary>${cellsHtml(cells)}</details>
+    </article>`;
+  }).join("");
+  const summary = results.length
+    ? `${results.length} ${results.length===1?"fila":"filas"} para «${escapeHtml(query)}».`
+    : `No encontré «${escapeHtml(query)}».`;
+  box.innerHTML = `<p class="al-search-note" role="status">${summary}${!file&&alt.err?" Resultados de la última revisión exitosa.":""}</p>
+    ${cards}
+    ${!results.length?`<p class="al-search-note">Si se sobrescribió la observación o se borró una fila, revisá Archivo → Historial de versiones en Google Sheets.</p>`:""}
+    ${results.length>visible?`<div><button type="button" class="btn ghost small" id="alSearchMore">Ver más resultados (${results.length-visible})</button></div>`:""}`;
+  const more = el("alSearchMore");
+  if(more) more.onclick = ()=>{ altSearch.visible+=ALT_SEARCH_PAGE; altDibujarBusqueda(); el("alSearchMore")?.focus(); };
+}
+
+function altEjecutarBusqueda(query){
+  altSearch.draft = altSearch.query = query.trim();
+  altSearch.visible = ALT_SEARCH_PAGE;
+  el("alSearchInput").value = altSearch.draft;
+  altDibujarBusqueda();
+  if(altTexto(query) && !altSearch.file && !alt.rows && altCfg().url) altRevisar(false);
+}
+
 function renderAlertas(){
   const c = altCfg(), A = altState(), v = altVisibles();
+  const searchInput = document.activeElement?.id==="alSearchInput" ? document.activeElement : null;
   const cnt = s=>v.filter(a=>a.sev===s).length;
   const lista = v.filter(a=>!alt.sev || a.sev===alt.sev);
   const SEV = {alta:["atrasado","Alta"], media:["en_curso","Media"], baja:["pendiente","Baja"]};
@@ -2579,12 +2770,26 @@ function renderAlertas(){
       <button class="btn accent small" id="alGo">Guardar y revisar ahora</button>
       <button class="btn ghost small" id="alRef" title="Toma el estado actual como el correcto: se apagan los avisos de borrados anteriores">Aceptar estado actual como referencia</button>
       ${A.ignoradas.length?`<button class="btn ghost small" id="alReset">Mostrar ${A.ignoradas.length} ignorada(s)</button>`:""}
-      <span style="font-size:12px;color:var(--ink-soft);">${alt.loading?"Revisando…":(alt.at?"Última revisión: "+alt.at.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}):"Todavía no se revisó")}</span>
+      <span style="font-size:12px;color:var(--ink-soft);">${alt.loading?"Revisando…":(alt.at?"Última revisión: "+alt.at.toLocaleString("es-AR",{dateStyle:"short",timeStyle:"short"}):"Todavía no se revisó")}</span>
     </div>
     <p style="margin:0;font-size:11.5px;color:var(--ink-soft);">La URL se guarda solo en este navegador. Compara las hojas <b>Movimientos</b> y <b>Stock</b>, y se acuerda de lo que vio antes para detectar borrados.</p>
     ${alt.err?`<p style="margin:0;color:var(--red);font-size:12.5px;">${escapeHtml(alt.err)}</p>`:""}
     ${alt.primera&&alt.data?`<p style="margin:0;font-size:12.5px;color:var(--ink-soft);">Primera revisión: se guardó la foto de referencia. Desde ahora te aviso si algo desaparece.</p>`:""}
   </div>
+  <section class="ind-card" style="margin-bottom:12px;" aria-label="Buscar en la planilla">
+    <form id="alSearchForm" class="al-search-form">
+      <div class="field"><label for="alSearchInput">Buscar en la planilla</label><input type="search" id="alSearchInput" maxlength="180" placeholder="Ej. autorizado por · cinta aisladora" value="${escapeAttr(altSearch.draft)}"></div>
+      <button class="btn accent small" type="submit"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg>Buscar</button>
+    </form>
+    <div class="al-search-source">
+      <button type="button" id="alSearchFile" class="btn ghost small">Abrir copia .xlsx</button>
+      <input type="file" id="alSearchFileInput" accept=".xlsx" hidden>
+      <button type="button" id="alSearchLive" class="btn ghost small" hidden>Volver a la planilla conectada</button>
+      <p id="alSearchSource" class="al-search-note" role="status"></p>
+    </div>
+    <p id="alSearchError" class="al-search-note" role="alert" style="color:var(--red);" hidden></p>
+    <div id="alSearchResults" class="al-search-results"></div>
+  </section>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
     <button class="btn ${!alt.sev?"accent":"ghost"} small" data-s="">Todas (${v.length})</button>
     <button class="btn ${alt.sev==="alta"?"accent":"ghost"} small" data-s="alta">Altas (${cnt("alta")})</button>
@@ -2594,11 +2799,16 @@ function renderAlertas(){
   <div class="table-scroll" role="region" aria-label="Tabla de alertas; desliza horizontalmente para ver todas las columnas" tabindex="0"><table class="data"><thead><tr><th>Nivel</th><th>Alerta</th><th>Detalle</th><th></th></tr></thead><tbody>
   ${lista.map((a,i)=>`<tr data-i="${i}" style="cursor:default;"><td><span class="badge ${SEV[a.sev][0]}">${SEV[a.sev][1]}</span></td>
     <td style="font-weight:500;">${escapeHtml(a.tit)}</td><td style="white-space:normal;min-width:260px;">${escapeHtml(a.det)}</td>
-    <td style="white-space:nowrap;"><button class="btn ghost small al-ok">${a.ack?"Aceptar":"Ignorar"}</button></td></tr>`).join("")
-    || `<tr><td colspan="4" style="text-align:center;color:var(--ink-soft);padding:24px;">${alt.data?"Sin alertas: Stock y Movimientos son coherentes.":"Configurá la URL y tocá «Guardar y revisar ahora»."}</td></tr>`}
+    <td style="white-space:nowrap;">${a.search?'<button class="btn ghost small al-find">Buscar filas</button> ':''}<button class="btn ghost small al-ok">${a.ack?"Aceptar":"Ignorar"}</button></td></tr>`).join("")
+    || `<tr><td colspan="4" style="text-align:center;color:var(--ink-soft);padding:24px;">${alt.data?(alt.data.length?"Sin alertas visibles con este filtro.":"Sin alertas en la última revisión."):"Configurá la URL y tocá «Guardar y revisar ahora»."}</td></tr>`}
   </tbody></table></div>`;
 
-  el("alGo").onclick = ()=>{ altSaveCfg({url:el("alUrl").value.trim(), token:el("alTok").value.trim()}); altRevisar(false); };
+  el("alGo").onclick = ()=>{
+    if(alt.loading) return;
+    const next = {url:el("alUrl").value.trim(),token:el("alTok").value.trim()};
+    if(next.url!==(c.url||"") || next.token!==(c.token||"")){ alt.rows=null; alt.at=null; alt.data=null; }
+    altSaveCfg(next); altRevisar(false);
+  };
   el("alRef").onclick = ()=>{
     if(!alt.data || !confirm("¿Tomar el estado actual como correcto? Se borran de la referencia los pedidos/productos que ya no existen.")) return;
     const A2 = altState();
@@ -2606,6 +2816,30 @@ function renderAlertas(){
     alt.data = alt.data.filter(a=>!a.ack); save(); altBadgeUpdate(); renderAlertas();
   };
   if(el("alReset")) el("alReset").onclick = ()=>{ altState().ignoradas = []; save(); altBadgeUpdate(); renderAlertas(); };
+  el("alSearchForm").onsubmit = event=>{ event.preventDefault(); altEjecutarBusqueda(el("alSearchInput").value); };
+  el("alSearchInput").oninput = event=>{
+    altSearch.draft = event.target.value;
+    if(!event.target.value) altEjecutarBusqueda("");
+  };
+  el("alSearchFile").onclick = ()=>el("alSearchFileInput").click();
+  el("alSearchFileInput").onchange = event=>{
+    const file = event.target.files[0]; event.target.value = "";
+    if(file) altLeerXlsx(file);
+  };
+  el("alSearchLive").onclick = ()=>{
+    altSearch.file=null; altSearch.error="";
+    altEjecutarBusqueda(altSearch.draft);
+  };
+  viewEl.querySelectorAll(".al-find").forEach(button=>button.onclick=()=>{
+    altEjecutarBusqueda(lista[Number(button.closest("tr").dataset.i)].search);
+    el("alSearchInput").focus();
+  });
+  altDibujarBusqueda();
+  if(searchInput){
+    const input = el("alSearchInput");
+    input.focus({preventScroll:true});
+    input.setSelectionRange(searchInput.selectionStart,searchInput.selectionEnd);
+  }
   viewEl.querySelectorAll("[data-s]").forEach(b=>b.onclick=()=>{ alt.sev=b.dataset.s; renderAlertas(); });
   viewEl.querySelectorAll(".al-ok").forEach(b=>b.onclick=()=>{
     const a = lista[parseInt(b.closest("tr").dataset.i)];
