@@ -3,8 +3,8 @@ import {
   compareRowFields, reviewReturn, indexWorkbook, chosenRow, lineId, compareReceipts, transcribe, publicReceipt,
   receiveReceipt, exportRows, GeminiQuotaError, publicLine, newLineKey, excelBlocks, GEMINI_MODELS, productCategories,
   excelCorrection, excelEditLabel, excelEditLabels, excelEditValue, excelRowEdits, isReturnMovement, sameWorkbookRows
-} from './control-remitos-core.js?v=ajustes-excel';
-import { buildRemitosExcel } from './control-remitos-export.js?v=ajustes-excel';
+} from './control-remitos-core.js?v=fix-records-20261120';
+import { buildRemitosExcel } from './control-remitos-export.js?v=fix-records-20261120';
 
 const $ = id => document.getElementById(id);
 const LEGACY_KEY = 'control_remitos_gemini_key_v1';
